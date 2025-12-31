@@ -8,28 +8,32 @@ import os
 
 st.set_page_config(page_title="Freight Pricing Tool", page_icon="🚚", layout="wide")
 
+# Get the directory where app.py is located
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
 @st.cache_resource
 def load_models():
-    MODEL_DIR = 'model_export'
+    MODEL_DIR = os.path.join(APP_DIR, 'model_export')
     
     carrier_model = CatBoostRegressor()
     shipper_model = CatBoostRegressor()
     
     # Try JSON format first (more portable), fallback to CBM
-    if os.path.exists(f'{MODEL_DIR}/carrier_model.json'):
-        carrier_model.load_model(f'{MODEL_DIR}/carrier_model.json', format='json')
-        shipper_model.load_model(f'{MODEL_DIR}/shipper_model.json', format='json')
+    json_path = os.path.join(MODEL_DIR, 'carrier_model.json')
+    if os.path.exists(json_path):
+        carrier_model.load_model(os.path.join(MODEL_DIR, 'carrier_model.json'), format='json')
+        shipper_model.load_model(os.path.join(MODEL_DIR, 'shipper_model.json'), format='json')
     else:
-        carrier_model.load_model(f'{MODEL_DIR}/carrier_model.cbm')
-        shipper_model.load_model(f'{MODEL_DIR}/shipper_model.cbm')
+        carrier_model.load_model(os.path.join(MODEL_DIR, 'carrier_model.cbm'))
+        shipper_model.load_model(os.path.join(MODEL_DIR, 'shipper_model.cbm'))
     
-    with open(f'{MODEL_DIR}/knn_bundle.pkl', 'rb') as f:
+    with open(os.path.join(MODEL_DIR, 'knn_bundle.pkl'), 'rb') as f:
         knn_bundle = pickle.load(f)
     
-    with open(f'{MODEL_DIR}/config.pkl', 'rb') as f:
+    with open(os.path.join(MODEL_DIR, 'config.pkl'), 'rb') as f:
         config = pickle.load(f)
     
-    df_knn = pd.read_parquet(f'{MODEL_DIR}/reference_data.parquet')
+    df_knn = pd.read_parquet(os.path.join(MODEL_DIR, 'reference_data.parquet'))
     
     return {
         'carrier_model': carrier_model, 'shipper_model': shipper_model,
@@ -271,7 +275,6 @@ if st.button("🎯 Generate Negotiation Corridor", type="primary"):
         (df_knn['lane'] != lane)
     ]
     if len(other) > 0:
-        # Simple distance-based similarity
         dist_tol = distance * 0.25
         similar_m = other[
             (other['distance'] >= distance - dist_tol) &

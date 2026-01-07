@@ -18,9 +18,17 @@ ANCHOR_DISCOUNT = 12
 CEILING_PREMIUM = 5
 N_SIMILAR = 10
 MIN_DAYS_APART = 5
-MAX_AGE_DAYS = 180  # Nothing older than 6 months
-RECENT_PRIORITY_DAYS = 30  # Prioritize last 30 days
-RECENCY_WINDOW = 90  # Recent stats window
+MAX_AGE_DAYS = 180
+RECENT_PRIORITY_DAYS = 30
+RECENCY_WINDOW = 90
+
+# Error bar percentages by confidence level
+ERROR_BARS = {
+    'High': 0.10,      # ±10%
+    'Medium': 0.15,    # ±15%
+    'Low': 0.25,       # ±25%
+    'Very Low': 0.35   # ±35%
+}
 
 # ============================================
 # TRANSLATION MAPPINGS
@@ -62,6 +70,7 @@ CITY_EN = {
     'Khamis Mushait': 'Khamis Mushait',
     'Abha': 'Abha',
     'Umluj': 'Umluj',
+    'الجبيل': 'Jubail',
 }
 
 CITY_AR = {v: k for k, v in CITY_EN.items()}
@@ -70,51 +79,43 @@ CITY_MAPPING_EN_TO_AR = {
     'Jeddah': 'جدة', 'Jiddah': 'جدة', 'Jedda': 'جدة',
     'Riyadh': 'الرياض', 'Riyad': 'الرياض',
     'Dammam': 'الدمام', 'Dammam ': 'الدمام', 'Damam': 'الدمام',
-    'Makkah': 'مكة المكرمة', 'Mecca': 'مكة المكرمة', 'Mekkah': 'مكة المكرمة', 'Mekkah ': 'مكة المكرمة',
+    'Makkah': 'مكة المكرمة', 'Mecca': 'مكة المكرمة', 'Mekkah': 'مكة المكرمة',
     'Madina': 'المدينة المنورة', 'Madinah': 'المدينة المنورة', 'Medina': 'المدينة المنورة',
     'Rabigh': 'رابغ', 'Yanbu': 'ينبع', 'Yenbu': 'ينبع',
-    'Tabuk': 'تبوك', 'Tabuk ': 'تبوك', 'Tabouk': 'تبوك',
+    'Tabuk': 'تبوك', 'Tabouk': 'تبوك',
     'Taif': 'الطائف', 'Tayef': 'الطائف',
-    'Al Hasa': 'الْأَحْسَاء', 'Al-Hasa': 'الْأَحْسَاء', 'Ahsa': 'الْأَحْسَاء', 'Al Ahsa': 'الْأَحْسَاء',
+    'Al Hasa': 'الْأَحْسَاء', 'Al-Hasa': 'الْأَحْسَاء', 'Ahsa': 'الْأَحْسَاء',
     'Al Kharj': 'الخرج', 'Al-Kharij': 'الخرج', 'Kharj': 'الخرج',
-    'Al Qassim': 'القصيم', 'Al-Qassim': 'القصيم', 'Al Qaseem': 'القصيم', 'Qassim': 'القصيم', 'Qaseem': 'القصيم',
-    'Al Baha': 'ٱلْبَاحَة', 'Al-Baha': 'ٱلْبَاحَة', 'Baha': 'ٱلْبَاحَة',
-    'Jizan': 'جازان', 'Jazan': 'جازان', 'Gizan': 'جازان', 'Sabya': 'جازان',
+    'Al Qassim': 'القصيم', 'Qassim': 'القصيم', 'Qaseem': 'القصيم',
+    'Al Baha': 'ٱلْبَاحَة', 'Baha': 'ٱلْبَاحَة',
+    'Jizan': 'جازان', 'Jazan': 'جازان', 'Gizan': 'جازان',
     'Najran': 'نجران', 'Nejran': 'نجران',
     'Abha': 'Abha', 'Abaha': 'Abha',
-    'Khamis Mushait': 'Khamis Mushait', 'Khamis': 'Khamis Mushait', 'Khamis Mushit': 'Khamis Mushait',
-    'Arar': 'عرعر', 'Arar ': 'عرعر',
-    'Skaka': 'سكاكا', 'Sakaka': 'سكاكا',
+    'Khamis Mushait': 'Khamis Mushait', 'Khamis': 'Khamis Mushait',
+    'Arar': 'عرعر', 'Skaka': 'سكاكا', 'Sakaka': 'سكاكا',
     'Hafar Al Batin': 'حفر الباطن', 'Hafr Al Batin': 'حفر الباطن',
     'Neom': 'تبوك', 'NEOM': 'تبوك',
-    'Sudair': 'سدير',
-    'Umlug': 'Umluj', 'Umluj': 'Umluj',
-    'Jeddah - 1': 'جدة', 'Jeddah - 2': 'جدة', 'Jeddah City': 'جدة',
-    'Jeddah-1': 'جدة', 'Jeddah-2': 'جدة',
+    'Sudair': 'سدير', 'Umluj': 'Umluj',
+    'Jubail': 'الجبيل', 'Al Jubail': 'الجبيل',
 }
 
 CITY_MAPPING_AR_TO_AR = {
     'جدة': 'جدة', 'جده': 'جدة',
     'الرياض': 'الرياض', 'رياض': 'الرياض',
     'الدمام': 'الدمام', 'دمام': 'الدمام',
-    'مكة': 'مكة المكرمة', 'مكه': 'مكة المكرمة', 'مكة المكرمة': 'مكة المكرمة', 'مكه المكرمه': 'مكة المكرمة',
+    'مكة': 'مكة المكرمة', 'مكه': 'مكة المكرمة', 'مكة المكرمة': 'مكة المكرمة',
     'المدينة': 'المدينة المنورة', 'المدينه': 'المدينة المنورة', 'المدينة المنورة': 'المدينة المنورة',
     'الطائف': 'الطائف', 'طائف': 'الطائف',
-    'تبوك': 'تبوك',
-    'القصيم': 'القصيم', 'قصيم': 'القصيم',
+    'تبوك': 'تبوك', 'القصيم': 'القصيم', 'قصيم': 'القصيم',
     'الخرج': 'الخرج', 'خرج': 'الخرج',
     'جازان': 'جازان', 'جيزان': 'جازان',
-    'نجران': 'نجران',
-    'عرعر': 'عرعر',
-    'سكاكا': 'سكاكا',
-    'ينبع': 'ينبع',
-    'رابغ': 'رابغ',
-    'الاحساء': 'الْأَحْسَاء', 'الأحساء': 'الْأَحْسَاء', 'الْأَحْسَاء': 'الْأَحْسَاء', 'احساء': 'الْأَحْسَاء',
-    'الباحة': 'ٱلْبَاحَة', 'الباحه': 'ٱلْبَاحَة', 'ٱلْبَاحَة': 'ٱلْبَاحَة', 'باحة': 'ٱلْبَاحَة',
-    'حفر الباطن': 'حفر الباطن',
-    'سدير': 'سدير',
+    'نجران': 'نجران', 'عرعر': 'عرعر', 'سكاكا': 'سكاكا',
+    'ينبع': 'ينبع', 'رابغ': 'رابغ',
+    'الاحساء': 'الْأَحْسَاء', 'الأحساء': 'الْأَحْسَاء', 'الْأَحْسَاء': 'الْأَحْسَاء',
+    'الباحة': 'ٱلْبَاحَة', 'ٱلْبَاحَة': 'ٱلْبَاحَة',
+    'حفر الباطن': 'حفر الباطن', 'سدير': 'سدير',
     'ابها': 'Abha', 'أبها': 'Abha',
-    'خميس مشيط': 'Khamis Mushait', 'خميس': 'Khamis Mushait',
+    'خميس مشيط': 'Khamis Mushait', 'الجبيل': 'الجبيل',
 }
 
 def normalize_city(city_raw):
@@ -160,13 +161,105 @@ def to_arabic_vehicle(vtype_en):
     return DEFAULT_VEHICLE_AR
 
 # ============================================
+# RARE LANE PREDICTOR CLASS
+# ============================================
+class RareLanePredictor:
+    def __init__(self, model_artifacts):
+        m = model_artifacts
+        self.current_index = m['current_index']
+        self.lane_multipliers = m['lane_multipliers']
+        self.global_mean = m['global_mean']
+        self.k = m['k_prior_strength']
+        self.pickup_priors = m['pickup_priors']
+        self.dest_priors = m['dest_priors']
+        self.lane_stats = m['lane_stats']
+        self.city_to_region = m['city_to_region']
+        self.regional_cpk = {tuple(k.split('|')): v for k, v in m['regional_cpk'].items()}
+        self.model_date = m['model_date']
+    
+    def _predict_index(self, lane):
+        if lane in self.lane_multipliers:
+            return self.current_index * self.lane_multipliers[lane]
+        return None
+    
+    def _predict_shrinkage(self, lane, pickup_city, dest_city):
+        p_prior = self.pickup_priors.get(pickup_city, self.global_mean)
+        d_prior = self.dest_priors.get(dest_city, self.global_mean)
+        city_prior = (p_prior + d_prior) / 2
+        
+        if lane in self.lane_stats:
+            stats = self.lane_stats[lane]
+            lane_mean = stats['lane_mean']
+            lane_n = stats['lane_n']
+            lam = lane_n / (lane_n + self.k)
+            return lam * lane_mean + (1 - lam) * city_prior
+        else:
+            return city_prior
+    
+    def _predict_regional(self, pickup_city, dest_city):
+        p_region = self.city_to_region.get(pickup_city)
+        d_region = self.city_to_region.get(dest_city)
+        if p_region and d_region:
+            return self.regional_cpk.get((p_region, d_region))
+        return None
+    
+    def predict(self, pickup_city, dest_city, distance_km=None):
+        lane = f"{pickup_city} → {dest_city}"
+        
+        idx_pred = self._predict_index(lane)
+        shrink_pred = self._predict_shrinkage(lane, pickup_city, dest_city)
+        regional_pred = self._predict_regional(pickup_city, dest_city)
+        
+        if idx_pred is not None and shrink_pred is not None:
+            predicted_cpk = (idx_pred + shrink_pred) / 2
+            method = 'Index + Shrink Ensemble'
+            if lane in self.lane_stats:
+                n = self.lane_stats[lane]['lane_n']
+                confidence = 'High' if n >= 20 else 'Medium' if n >= 5 else 'Low'
+            else:
+                confidence = 'Low'
+        elif shrink_pred is not None:
+            predicted_cpk = shrink_pred
+            method = 'Shrinkage (city priors)'
+            confidence = 'Medium'
+        elif regional_pred is not None:
+            predicted_cpk = regional_pred
+            method = 'Regional Fallback'
+            confidence = 'Low'
+        else:
+            predicted_cpk = self.global_mean
+            method = 'Global Mean'
+            confidence = 'Very Low'
+        
+        error_pct = ERROR_BARS.get(confidence, 0.25)
+        price_low = predicted_cpk * (1 - error_pct)
+        price_high = predicted_cpk * (1 + error_pct)
+        
+        result = {
+            'predicted_cpk': round(predicted_cpk, 3),
+            'cpk_low': round(price_low, 3),
+            'cpk_high': round(price_high, 3),
+            'method': method,
+            'confidence': confidence,
+        }
+        
+        if distance_km and distance_km > 0:
+            result['predicted_cost'] = round(predicted_cpk * distance_km, 0)
+            result['cost_low'] = round(price_low * distance_km, 0)
+            result['cost_high'] = round(price_high * distance_km, 0)
+        
+        return result
+
+# ============================================
 # LOAD MODELS
 # ============================================
 @st.cache_resource
 def load_models():
     MODEL_DIR = os.path.join(APP_DIR, 'model_export')
+    
     carrier_model = CatBoostRegressor()
     shipper_model = CatBoostRegressor()
+    
     json_path = os.path.join(MODEL_DIR, 'carrier_model.json')
     if os.path.exists(json_path):
         carrier_model.load_model(os.path.join(MODEL_DIR, 'carrier_model.json'), format='json')
@@ -174,19 +267,37 @@ def load_models():
     else:
         carrier_model.load_model(os.path.join(MODEL_DIR, 'carrier_model.cbm'))
         shipper_model.load_model(os.path.join(MODEL_DIR, 'shipper_model.cbm'))
+    
     with open(os.path.join(MODEL_DIR, 'config.pkl'), 'rb') as f:
         config = pickle.load(f)
+    
     csv_path = os.path.join(MODEL_DIR, 'reference_data.csv')
     parquet_path = os.path.join(MODEL_DIR, 'reference_data.parquet')
     if os.path.exists(csv_path):
         df_knn = pd.read_csv(csv_path)
     else:
         df_knn = pd.read_parquet(parquet_path)
-    return {'carrier_model': carrier_model, 'shipper_model': shipper_model, 'config': config, 'df_knn': df_knn}
+    
+    # Load rare lane model if available
+    rare_lane_path = os.path.join(MODEL_DIR, 'rare_lane_models.pkl')
+    rare_lane_predictor = None
+    if os.path.exists(rare_lane_path):
+        with open(rare_lane_path, 'rb') as f:
+            rare_lane_artifacts = pickle.load(f)
+        rare_lane_predictor = RareLanePredictor(rare_lane_artifacts)
+    
+    return {
+        'carrier_model': carrier_model,
+        'shipper_model': shipper_model,
+        'config': config,
+        'df_knn': df_knn,
+        'rare_lane_predictor': rare_lane_predictor
+    }
 
 models = load_models()
 config = models['config']
 df_knn = models['df_knn']
+rare_lane_predictor = models['rare_lane_predictor']
 
 FEATURES = config['FEATURES']
 ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
@@ -199,15 +310,11 @@ VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_
 # SAMPLE SELECTION FOR AMMUNITION
 # ============================================
 def select_spaced_samples(df, n_samples, min_days_apart=MIN_DAYS_APART):
-    """Select samples at least min_days_apart apart, prioritizing recent (30d)."""
     if len(df) == 0:
         return pd.DataFrame()
-    
     df = df.sort_values('days_ago', ascending=True)
     selected = []
     last_days_ago = -min_days_apart
-    
-    # First pass: prioritize last 30 days
     recent_df = df[df['days_ago'] <= RECENT_PRIORITY_DAYS]
     for _, row in recent_df.iterrows():
         if row['days_ago'] >= last_days_ago + min_days_apart:
@@ -215,8 +322,6 @@ def select_spaced_samples(df, n_samples, min_days_apart=MIN_DAYS_APART):
             last_days_ago = row['days_ago']
             if len(selected) >= n_samples:
                 break
-    
-    # Second pass: fill with older data if needed
     if len(selected) < n_samples:
         older_df = df[df['days_ago'] > RECENT_PRIORITY_DAYS]
         for _, row in older_df.iterrows():
@@ -225,12 +330,9 @@ def select_spaced_samples(df, n_samples, min_days_apart=MIN_DAYS_APART):
                 last_days_ago = row['days_ago']
                 if len(selected) >= n_samples:
                     break
-    
     return pd.DataFrame(selected) if selected else pd.DataFrame()
 
 def get_ammunition_loads(lane, vehicle_ar, commodity=None):
-    """Get ammunition loads for single route view - 5 same commodity + 5 other commodities."""
-    # Filter: exact lane + vehicle, max 6 months old
     matches = df_knn[
         (df_knn['lane'] == lane) & 
         (df_knn['vehicle_type'] == vehicle_ar) &
@@ -244,7 +346,6 @@ def get_ammunition_loads(lane, vehicle_ar, commodity=None):
         same_commodity = matches[matches['commodity'] == commodity]
         other_commodity = matches[matches['commodity'] != commodity]
     else:
-        # If no commodity specified, use most common
         if len(matches) > 0:
             most_common = matches['commodity'].mode().iloc[0]
             same_commodity = matches[matches['commodity'] == most_common]
@@ -253,22 +354,17 @@ def get_ammunition_loads(lane, vehicle_ar, commodity=None):
             same_commodity = pd.DataFrame()
             other_commodity = pd.DataFrame()
     
-    same_samples = select_spaced_samples(same_commodity, 5)
-    other_samples = select_spaced_samples(other_commodity, 5)
-    
-    return same_samples, other_samples
+    return select_spaced_samples(same_commodity, 5), select_spaced_samples(other_commodity, 5)
 
 # ============================================
-# BULK LOOKUP: Historical/Recent Stats Only
+# BULK LOOKUP WITH RARE LANE
 # ============================================
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
-    """Look up historical and recent stats for a route - no model, no individual samples."""
     if vehicle_ar is None or vehicle_ar in ['', 'Auto', 'auto', None]:
         vehicle_ar = DEFAULT_VEHICLE_AR
     
     lane = f"{pickup_ar} → {dest_ar}"
     
-    # All data for this lane + vehicle
     lane_data = df_knn[
         (df_knn['lane'] == lane) & 
         (df_knn['vehicle_type'] == vehicle_ar)
@@ -276,17 +372,19 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
     
     recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     
-    # Historical stats (all time)
+    # Historical stats
     if len(lane_data) > 0:
         hist_count = len(lane_data)
         hist_min = int(lane_data['total_carrier_price'].min())
         hist_max = int(lane_data['total_carrier_price'].max())
         hist_median = int(lane_data['total_carrier_price'].median())
+        distance = lane_data['distance'].median()
     else:
         hist_count = 0
         hist_min = hist_max = hist_median = None
+        distance = DISTANCE_LOOKUP.get(lane, 500)
     
-    # Recent stats (last 90 days)
+    # Recent stats
     if len(recent_data) > 0:
         recent_count = len(recent_data)
         recent_min = int(recent_data['total_carrier_price'].min())
@@ -296,10 +394,11 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
         recent_count = 0
         recent_min = recent_max = recent_median = None
     
-    return {
+    result = {
         'From': to_english_city(pickup_ar),
         'To': to_english_city(dest_ar),
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
+        'Distance_km': int(distance),
         'Hist_Count': hist_count,
         'Hist_Min': hist_min,
         'Hist_Median': hist_median,
@@ -309,9 +408,21 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
         f'Recent_{RECENCY_WINDOW}d_Median': recent_median,
         f'Recent_{RECENCY_WINDOW}d_Max': recent_max,
     }
+    
+    # Add rare lane prediction if available and useful
+    if rare_lane_predictor:
+        rare_pred = rare_lane_predictor.predict(pickup_ar, dest_ar, distance)
+        result['Model_CPK'] = rare_pred['predicted_cpk']
+        result['Model_Price_Low'] = rare_pred.get('cost_low')
+        result['Model_Price'] = rare_pred.get('predicted_cost')
+        result['Model_Price_High'] = rare_pred.get('cost_high')
+        result['Model_Method'] = rare_pred['method']
+        result['Model_Confidence'] = rare_pred['confidence']
+    
+    return result
 
 # ============================================
-# SINGLE ROUTE PRICING (Uses model)
+# SINGLE ROUTE PRICING
 # ============================================
 def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weight=None):
     if vehicle_ar is None or vehicle_ar in ['', 'Auto', 'auto', None]:
@@ -335,29 +446,18 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             lane_data = local_data
             recent_data = local_recent
     
-    if len(lane_data) > 0:
-        hist_count = len(lane_data)
-        hist_min = lane_data['total_carrier_price'].min()
-        hist_max = lane_data['total_carrier_price'].max()
-        hist_median = lane_data['total_carrier_price'].median()
-    else:
-        hist_count = 0
-        hist_min = hist_max = hist_median = None
+    hist_count = len(lane_data) if len(lane_data) > 0 else 0
+    hist_min = lane_data['total_carrier_price'].min() if hist_count > 0 else None
+    hist_max = lane_data['total_carrier_price'].max() if hist_count > 0 else None
+    hist_median = lane_data['total_carrier_price'].median() if hist_count > 0 else None
     
-    if len(recent_data) > 0:
-        recent_count = len(recent_data)
-        recent_min = recent_data['total_carrier_price'].min()
-        recent_max = recent_data['total_carrier_price'].max()
-        recent_median = recent_data['total_carrier_price'].median()
-    else:
-        recent_count = 0
-        recent_min = recent_max = recent_median = None
+    recent_count = len(recent_data) if len(recent_data) > 0 else 0
+    recent_min = recent_data['total_carrier_price'].min() if recent_count > 0 else None
+    recent_max = recent_data['total_carrier_price'].max() if recent_count > 0 else None
+    recent_median = recent_data['total_carrier_price'].median() if recent_count > 0 else None
     
     if commodity is None or commodity in ['', 'Auto', 'auto']:
-        if len(lane_data) > 0:
-            commodity = lane_data['commodity'].mode().iloc[0]
-        else:
-            commodity = df_knn['commodity'].mode().iloc[0]
+        commodity = lane_data['commodity'].mode().iloc[0] if len(lane_data) > 0 else df_knn['commodity'].mode().iloc[0]
     
     if weight is None or weight == 0:
         comm_weights = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
@@ -406,7 +506,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     ceiling = recommended * (1 + CEILING_PREMIUM / 100)
     cost_per_km = recommended / distance if distance > 0 else None
     
-    return {
+    result = {
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
         'Commodity': commodity,
         'Weight_Tons': round(weight, 1),
@@ -417,8 +517,8 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         'Hist_Max': round(hist_max, 0) if hist_max else None,
         f'Recent_{RECENCY_WINDOW}d_Count': recent_count,
         f'Recent_{RECENCY_WINDOW}d_Min': round(recent_min, 0) if recent_min else None,
-        f'Recent_{RECENCY_WINDOW}d_Median': round(recent_median, 0) if recent_median else None,
-        f'Recent_{RECENCY_WINDOW}d_Max': round(recent_max, 0) if recent_max else None,
+        f'Recent_{RECENCY_WINDOW}d_Median': round(recent_median, 0) if recent_min else None,
+        f'Recent_{RECENCY_WINDOW}d_Max': round(recent_max, 0) if recent_min else None,
         'Recommended_Carrier': round(recommended, 0),
         'Recommendation_Source': source,
         'Shipper_Rate': round(pred_shipper, 0),
@@ -429,6 +529,17 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         'Margin': round(pred_shipper - recommended, 0),
         'Margin_Pct': round((pred_shipper - recommended) / pred_shipper * 100, 1) if pred_shipper > 0 else None,
     }
+    
+    # Add rare lane prediction for comparison
+    if rare_lane_predictor:
+        rare_pred = rare_lane_predictor.predict(pickup_ar, dest_ar, distance)
+        result['RareLane_CPK'] = rare_pred['predicted_cpk']
+        result['RareLane_Price'] = rare_pred.get('predicted_cost')
+        result['RareLane_Range'] = f"{rare_pred.get('cost_low', 0):,.0f} - {rare_pred.get('cost_high', 0):,.0f}"
+        result['RareLane_Method'] = rare_pred['method']
+        result['RareLane_Confidence'] = rare_pred['confidence']
+    
+    return result
 
 # ============================================
 # BUILD DROPDOWN OPTIONS
@@ -445,7 +556,8 @@ commodities = sorted(df_knn['commodity'].unique())
 # APP UI
 # ============================================
 st.title("🚚 Freight Pricing Negotiation Tool")
-st.caption(f"ML-powered pricing | Domestic | Default: Flatbed Trailer")
+rare_lane_status = "✅ Rare Lane Model" if rare_lane_predictor else ""
+st.caption(f"ML-powered pricing | Domestic | Default: Flatbed Trailer {rare_lane_status}")
 
 tab1, tab2 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup"])
 
@@ -476,7 +588,7 @@ with tab1:
 
     with col1:
         container_options = ['Auto-detect', 'Yes (Container)', 'No (Non-container)']
-        container_select = st.selectbox("Container", options=container_options, key='single_container')
+        st.selectbox("Container", options=container_options, key='single_container')
 
     with col2:
         commodity_options = ['Auto-detect'] + commodities
@@ -510,6 +622,18 @@ with tab1:
         
         st.caption(f"📊 Cost/km: **{result['Cost_Per_KM']:.2f} SAR** | Shipper: {result['Shipper_Rate']:,.0f} SAR | Source: {result['Recommendation_Source']}")
         
+        # Rare Lane Model (if available)
+        if rare_lane_predictor and 'RareLane_Price' in result:
+            with st.expander("🔮 Rare Lane Model (for sparse lanes)", expanded=False):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Predicted Price", f"{result['RareLane_Price']:,.0f} SAR")
+                with col2:
+                    st.metric("Price Range", result['RareLane_Range'])
+                with col3:
+                    st.metric("Confidence", result['RareLane_Confidence'])
+                st.caption(f"Method: {result['RareLane_Method']} | CPK: {result['RareLane_CPK']:.3f} SAR/km")
+        
         # Historical & Recent Stats
         st.markdown("---")
         st.subheader(f"📊 Price History: {lane_en} ({result['Vehicle_Type']})")
@@ -539,13 +663,12 @@ with tab1:
             else:
                 st.warning(f"No loads in last {RECENCY_WINDOW} days")
         
-        # AMMUNITION - Recent Matches
+        # AMMUNITION
         st.markdown("---")
         st.subheader("🚚 Your Ammunition (Recent Matches)")
         
         same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, commodity_input)
         
-        # Same commodity
         commodity_used = commodity_input if commodity_input else result['Commodity']
         if len(same_samples) > 0:
             st.markdown(f"**Same Commodity ({commodity_used}):**")
@@ -558,7 +681,6 @@ with tab1:
         else:
             st.caption(f"No recent loads with {commodity_used}")
         
-        # Other commodities
         if len(other_samples) > 0:
             st.markdown("**Other Commodities:**")
             other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
@@ -572,20 +694,21 @@ with tab1:
         
         total_shown = len(same_samples) + len(other_samples)
         if total_shown > 0:
-            st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Prioritizing last {RECENT_PRIORITY_DAYS} days | Max {MAX_AGE_DAYS} days old")
+            st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
 
 # ============================================
-# TAB 2: BULK ROUTE LOOKUP (Stats only)
+# TAB 2: BULK ROUTE LOOKUP
 # ============================================
 with tab2:
     st.subheader("📦 Bulk Route Lookup")
     
+    model_note = "+ Rare Lane Model predictions" if rare_lane_predictor else ""
     st.markdown(f"""
     **Upload a CSV to get historical and recent price stats for each route.**
     
     - **Required:** `From`, `To`
     - **Optional:** `Vehicle_Type` (default: Flatbed Trailer)
-    - Output: Historical & Recent ({RECENCY_WINDOW}d) Min/Median/Max
+    - Output: Historical & Recent ({RECENCY_WINDOW}d) Min/Median/Max {model_note}
     """)
     
     sample_df = pd.DataFrame({
@@ -661,7 +784,7 @@ with tab2:
                 if len(unmatched_cities) > 0:
                     st.markdown("---")
                     st.subheader("⚠️ Unmatched Cities")
-                    st.warning(f"{len(unmatched_cities)} cities could not be matched. Check spelling.")
+                    st.warning(f"{len(unmatched_cities)} cities could not be matched.")
                     st.dataframe(pd.DataFrame(unmatched_cities), use_container_width=True, hide_index=True)
         
         except Exception as e:

@@ -585,29 +585,51 @@ VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_
 # ============================================
 # DISTANCE LOOKUP FUNCTION
 # ============================================
-def get_distance(pickup_ar, dest_ar):
-    """Get distance between two cities. Returns (distance, source)."""
-    # Try distance matrix first (hardcoded)
-    dist = DISTANCE_MATRIX.get((pickup_ar, dest_ar))
-    if dist and dist > 0:
-        return dist, 'Matrix'
+def get_distance(pickup_ar, dest_ar, lane_data=None):
+    """
+    Get distance between two cities with consistent priority:
+    1. Historical distance from lane data (if provided and has data)
+    2. Reverse lane historical distance
+    3. Hardcoded distance matrix
+    4. Reverse in distance matrix
     
-    # Try reverse
-    dist = DISTANCE_MATRIX.get((dest_ar, pickup_ar))
-    if dist and dist > 0:
-        return dist, 'Matrix'
-    
-    # Try DISTANCE_LOOKUP from config (historical)
+    Returns (distance, source)
+    """
     lane = f"{pickup_ar} → {dest_ar}"
+    reverse_lane = f"{dest_ar} → {pickup_ar}"
+    
+    # 1. Try historical distance from lane data (passed in or look up)
+    if lane_data is not None and len(lane_data) > 0:
+        dist_vals = lane_data[lane_data['distance'] > 0]['distance']
+        if len(dist_vals) > 0:
+            return dist_vals.median(), 'Historical'
+    
+    # 2. Try reverse lane in historical data
+    reverse_data = df_knn[df_knn['lane'] == reverse_lane]
+    if len(reverse_data) > 0:
+        dist_vals = reverse_data[reverse_data['distance'] > 0]['distance']
+        if len(dist_vals) > 0:
+            return dist_vals.median(), 'Historical (reverse)'
+    
+    # 3. Try DISTANCE_LOOKUP from config (historical aggregates)
     dist = DISTANCE_LOOKUP.get(lane)
     if dist and dist > 0:
         return dist, 'Historical'
     
-    # Try reverse lane
-    reverse_lane = f"{dest_ar} → {pickup_ar}"
+    # 4. Try reverse in DISTANCE_LOOKUP
     dist = DISTANCE_LOOKUP.get(reverse_lane)
     if dist and dist > 0:
-        return dist, 'Historical'
+        return dist, 'Historical (reverse)'
+    
+    # 5. Try hardcoded distance matrix
+    dist = DISTANCE_MATRIX.get((pickup_ar, dest_ar))
+    if dist and dist > 0:
+        return dist, 'Matrix'
+    
+    # 6. Try reverse in distance matrix
+    dist = DISTANCE_MATRIX.get((dest_ar, pickup_ar))
+    if dist and dist > 0:
+        return dist, 'Matrix (reverse)'
     
     # Log missing distance
     log_exception('missing_distance', {
@@ -617,7 +639,7 @@ def get_distance(pickup_ar, dest_ar):
         'destination_en': to_english_city(dest_ar),
     })
     
-    return 0, 'Missing'  # Return 0 to flag as missing
+    return 0, 'Missing'
 
 # ============================================
 # SAMPLE SELECTION FOR AMMUNITION
@@ -679,20 +701,14 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
     
     lane = f"{pickup_ar} → {dest_ar}"
     
-    # Get distance with source
-    distance, distance_source = get_distance(pickup_ar, dest_ar)
-    
-    # Try to get distance from historical data if matrix failed
+    # Get lane data first
     lane_data = df_knn[
         (df_knn['lane'] == lane) & 
         (df_knn['vehicle_type'] == vehicle_ar)
     ].copy()
     
-    if distance == 0 and len(lane_data) > 0:
-        dist_vals = lane_data[lane_data['distance'] > 0]['distance']
-        if len(dist_vals) > 0:
-            distance = dist_vals.median()
-            distance_source = 'Historical'
+    # Get distance with lane data for historical lookup
+    distance, distance_source = get_distance(pickup_ar, dest_ar, lane_data)
     
     recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     
@@ -774,13 +790,8 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         comm_weights = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
         weight = comm_weights.median() if len(comm_weights) > 0 else df_knn['weight'].median()
     
-    # Get distance
-    distance, distance_source = get_distance(pickup_ar, dest_ar)
-    if distance == 0 and len(lane_data) > 0:
-        dist_vals = lane_data[lane_data['distance'] > 0]['distance']
-        if len(dist_vals) > 0:
-            distance = dist_vals.median()
-            distance_source = 'Historical'
+    # Get distance with lane data for proper priority
+    distance, distance_source = get_distance(pickup_ar, dest_ar, lane_data)
     if distance == 0:
         distance = 500  # Last resort default
         distance_source = 'Default'

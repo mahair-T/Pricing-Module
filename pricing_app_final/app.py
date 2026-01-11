@@ -495,7 +495,7 @@ class RareLanePredictor:
         elif regional_pred is not None:
             predicted_cpk = regional_pred
             method = 'Regional Fallback'
-            confidence = 'Low'
+            confidence = 'Low'  # Regional is ALWAYS Low confidence
         else:
             predicted_cpk = self.global_mean
             method = 'Global Mean'
@@ -586,28 +586,28 @@ VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_
 # DISTANCE LOOKUP FUNCTION
 # ============================================
 def get_distance(pickup_ar, dest_ar):
-    """Get distance between two cities."""
-    # Try distance matrix first
+    """Get distance between two cities. Returns (distance, source)."""
+    # Try distance matrix first (hardcoded)
     dist = DISTANCE_MATRIX.get((pickup_ar, dest_ar))
     if dist and dist > 0:
-        return dist
+        return dist, 'Matrix'
     
     # Try reverse
     dist = DISTANCE_MATRIX.get((dest_ar, pickup_ar))
     if dist and dist > 0:
-        return dist
+        return dist, 'Matrix'
     
-    # Try DISTANCE_LOOKUP from config
+    # Try DISTANCE_LOOKUP from config (historical)
     lane = f"{pickup_ar} → {dest_ar}"
     dist = DISTANCE_LOOKUP.get(lane)
     if dist and dist > 0:
-        return dist
+        return dist, 'Historical'
     
     # Try reverse lane
     reverse_lane = f"{dest_ar} → {pickup_ar}"
     dist = DISTANCE_LOOKUP.get(reverse_lane)
     if dist and dist > 0:
-        return dist
+        return dist, 'Historical'
     
     # Log missing distance
     log_exception('missing_distance', {
@@ -617,7 +617,7 @@ def get_distance(pickup_ar, dest_ar):
         'destination_en': to_english_city(dest_ar),
     })
     
-    return 0  # Return 0 to flag as missing
+    return 0, 'Missing'  # Return 0 to flag as missing
 
 # ============================================
 # SAMPLE SELECTION FOR AMMUNITION
@@ -679,8 +679,8 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
     
     lane = f"{pickup_ar} → {dest_ar}"
     
-    # Get distance
-    distance = get_distance(pickup_ar, dest_ar)
+    # Get distance with source
+    distance, distance_source = get_distance(pickup_ar, dest_ar)
     
     # Try to get distance from historical data if matrix failed
     lane_data = df_knn[
@@ -692,6 +692,7 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
         dist_vals = lane_data[lane_data['distance'] > 0]['distance']
         if len(dist_vals) > 0:
             distance = dist_vals.median()
+            distance_source = 'Historical'
     
     recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     
@@ -728,6 +729,7 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
         'To': to_english_city(dest_ar),
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
         'Distance_km': int(distance) if distance else 0,
+        'Distance_Source': distance_source,
         'Recommended_Price': recommended,
         'Recent_Count': recent_count,
         'Model_Prediction': model_prediction,
@@ -773,13 +775,15 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         weight = comm_weights.median() if len(comm_weights) > 0 else df_knn['weight'].median()
     
     # Get distance
-    distance = get_distance(pickup_ar, dest_ar)
+    distance, distance_source = get_distance(pickup_ar, dest_ar)
     if distance == 0 and len(lane_data) > 0:
         dist_vals = lane_data[lane_data['distance'] > 0]['distance']
         if len(dist_vals) > 0:
             distance = dist_vals.median()
+            distance_source = 'Historical'
     if distance == 0:
         distance = 500  # Last resort default
+        distance_source = 'Default'
     
     if len(lane_data) > 0:
         container = int(lane_data['container'].mode().iloc[0])
@@ -820,6 +824,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         'Commodity': to_english_commodity(commodity),
         'Weight_Tons': round(weight, 1),
         'Distance_km': round(distance, 0),
+        'Distance_Source': distance_source,
         'Hist_Count': hist_count,
         'Hist_Min': round(hist_min, 0) if hist_min else None,
         'Hist_Median': round(hist_median, 0) if hist_median else None,
@@ -923,8 +928,10 @@ with tab1:
         st.markdown("---")
         
         # Check distance
-        if result['Distance_km'] == 0 or result['Distance_km'] == 500:
+        if result['Distance_km'] == 0 or result['Distance_Source'] == 'Default':
             st.error(f"⚠️ Distance data missing or estimated for this route ({result['Distance_km']} km)")
+        elif result['Distance_Source'] == 'Matrix':
+            st.caption(f"📏 Distance from hardcoded matrix: {result['Distance_km']:.0f} km")
         
         is_rare_lane = result.get('Is_Rare_Lane', False)
         
@@ -1049,20 +1056,27 @@ with tab1:
             total_shown = len(same_samples) + len(other_samples)
             if total_shown > 0:
                 st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
-        
-        # REPORT BUTTON - Always show
+    
+    # REPORT BUTTON - Outside generate block, uses session state
+    if 'last_result' in st.session_state and 'last_lane' in st.session_state:
         st.markdown("---")
         with st.expander("🚨 Report Issue with Distance/Data", expanded=False):
+            st.caption(f"Reporting for: {st.session_state.last_lane['pickup_en']} → {st.session_state.last_lane['dest_en']}")
+            
             issue_type = st.selectbox("Issue Type", 
                 ["Distance is incorrect", "Distance is 0/missing", "Data looks wrong", "Other"],
                 key='report_issue_type')
             user_notes = st.text_area("Additional Notes (optional)", key='report_notes')
             
             if st.button("📤 Submit Report", key='submit_report'):
+                lane_info = st.session_state.last_lane
+                result_info = st.session_state.last_result
                 success = report_distance_issue(
-                    pickup_city, destination_city,
-                    pickup_en, dest_en,
-                    result['Distance_km'],
+                    lane_info['pickup_ar'], 
+                    lane_info['dest_ar'],
+                    lane_info['pickup_en'], 
+                    lane_info['dest_en'],
+                    result_info['Distance_km'],
                     issue_type,
                     user_notes
                 )

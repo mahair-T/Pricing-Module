@@ -12,6 +12,103 @@ st.set_page_config(page_title="Freight Pricing Tool", page_icon="🚚", layout="
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ============================================
+# ERROR LOGGING (Google Sheets)
+# ============================================
+def get_gsheet_client():
+    """Get Google Sheets client using Streamlit secrets."""
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        
+        # Check if secrets are configured
+        if 'gcp_service_account' not in st.secrets:
+            return None
+        
+        scopes = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        
+        credentials = Credentials.from_service_account_info(
+            st.secrets['gcp_service_account'],
+            scopes=scopes
+        )
+        
+        return gspread.authorize(credentials)
+    except Exception as e:
+        st.warning(f"Google Sheets not configured: {e}")
+        return None
+
+@st.cache_resource
+def get_error_sheet():
+    """Get or create the error log sheet."""
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        sheet_url = st.secrets.get('error_log_sheet_url')
+        if not sheet_url:
+            return None
+        
+        spreadsheet = client.open_by_url(sheet_url)
+        
+        # Try to get existing worksheet or create one
+        try:
+            worksheet = spreadsheet.worksheet('ErrorLog')
+        except:
+            worksheet = spreadsheet.add_worksheet(title='ErrorLog', rows=1000, cols=10)
+            # Add headers
+            worksheet.update('A1:G1', [['Timestamp', 'Type', 'Pickup_City', 'Destination_City', 'Pickup_EN', 'Destination_EN', 'Details']])
+        
+        return worksheet
+    except Exception as e:
+        return None
+
+def log_exception(exception_type, details):
+    """Log exception to Google Sheets."""
+    from datetime import datetime
+    
+    # Also keep in session state for display
+    if 'error_log' not in st.session_state:
+        st.session_state.error_log = []
+    
+    log_entry = {
+        'timestamp': datetime.now().isoformat(),
+        'type': exception_type,
+        **details
+    }
+    st.session_state.error_log.append(log_entry)
+    
+    # Try to log to Google Sheets
+    try:
+        worksheet = get_error_sheet()
+        if worksheet:
+            row = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                exception_type,
+                details.get('pickup_city', details.get('original_value', '')),
+                details.get('destination_city', details.get('normalized_to', '')),
+                details.get('pickup_en', ''),
+                details.get('destination_en', ''),
+                str(details)
+            ]
+            worksheet.append_row(row)
+    except Exception as e:
+        # Silently fail - don't break the app for logging errors
+        pass
+
+def get_error_log_csv():
+    """Get error log as CSV string."""
+    if 'error_log' not in st.session_state or len(st.session_state.error_log) == 0:
+        return None
+    return pd.DataFrame(st.session_state.error_log).to_csv(index=False)
+
+def clear_error_log():
+    """Clear the session error log."""
+    st.session_state.error_log = []
+
+# ============================================
 # FIXED SETTINGS
 # ============================================
 ANCHOR_DISCOUNT = 12
@@ -30,6 +127,39 @@ ERROR_BARS = {
     'Very Low': 0.35   # ±35%
 }
 
+# Hardcoded distances for common routes (km) - fallback when no data
+HARDCODED_DISTANCES = {
+    ('جدة', 'الرياض'): 950, ('الرياض', 'جدة'): 950,
+    ('جدة', 'الدمام'): 1350, ('الدمام', 'جدة'): 1350,
+    ('جدة', 'مكة المكرمة'): 80, ('مكة المكرمة', 'جدة'): 80,
+    ('جدة', 'المدينة المنورة'): 420, ('المدينة المنورة', 'جدة'): 420,
+    ('جدة', 'ينبع'): 330, ('ينبع', 'جدة'): 330,
+    ('جدة', 'رابغ'): 150, ('رابغ', 'جدة'): 150,
+    ('جدة', 'الطائف'): 170, ('الطائف', 'جدة'): 170,
+    ('جدة', 'تبوك'): 1100, ('تبوك', 'جدة'): 1100,
+    ('جدة', 'جازان'): 700, ('جازان', 'جدة'): 700,
+    ('جدة', 'الْأَحْسَاء'): 1250, ('الْأَحْسَاء', 'جدة'): 1250,
+    ('جدة', 'القصيم'): 900, ('القصيم', 'جدة'): 900,
+    ('جدة', 'الخرج'): 1000, ('الخرج', 'جدة'): 1000,
+    ('جدة', 'سدير'): 1050, ('سدير', 'جدة'): 1050,
+    ('جدة', 'نجران'): 900, ('نجران', 'جدة'): 900,
+    ('جدة', 'عرعر'): 1500, ('عرعر', 'جدة'): 1500,
+    ('جدة', 'سكاكا'): 1400, ('سكاكا', 'جدة'): 1400,
+    ('جدة', 'Khamis Mushait'): 600, ('Khamis Mushait', 'جدة'): 600,
+    ('جدة', 'Abha'): 650, ('Abha', 'جدة'): 650,
+    ('الرياض', 'الدمام'): 400, ('الدمام', 'الرياض'): 400,
+    ('الرياض', 'القصيم'): 350, ('القصيم', 'الرياض'): 350,
+    ('الرياض', 'الخرج'): 80, ('الخرج', 'الرياض'): 80,
+    ('الرياض', 'ينبع'): 1050, ('ينبع', 'الرياض'): 1050,
+    ('الرياض', 'تبوك'): 1200, ('تبوك', 'الرياض'): 1200,
+    ('رابغ', 'الرياض'): 1000, ('الرياض', 'رابغ'): 1000,
+    ('رابغ', 'الدمام'): 1400, ('الدمام', 'رابغ'): 1400,
+    ('رابغ', 'المدينة المنورة'): 250, ('المدينة المنورة', 'رابغ'): 250,
+    ('رابغ', 'تبوك'): 700, ('تبوك', 'رابغ'): 700,
+    ('المدينة المنورة', 'ينبع'): 250, ('ينبع', 'المدينة المنورة'): 250,
+    ('تبوك', 'ينبع'): 600, ('ينبع', 'تبوك'): 600,
+}
+
 # ============================================
 # TRANSLATION MAPPINGS
 # ============================================
@@ -46,6 +176,49 @@ VEHICLE_TYPE_AR = {v: k for k, v in VEHICLE_TYPE_EN.items()}
 
 DEFAULT_VEHICLE_AR = 'تريلا فرش'
 DEFAULT_VEHICLE_EN = 'Flatbed Trailer'
+
+# Commodity translations
+COMMODITY_EN = {
+    'Unknown': 'Unknown',
+    'أكسيد الحديد': 'Iron Oxide',
+    'أكياس ورقية فارغة': 'Empty Paper Bags',
+    'أنابيب': 'Pipes',
+    'اجهزه كهربائيه': 'Electrical Equipment',
+    'ارز': 'Rice',
+    'اسمدة': 'Fertilizer',
+    'الطرود': 'Parcels',
+    'براميل': 'Barrels',
+    'بلاستيك': 'Plastic',
+    'تمر': 'Dates',
+    'جبس': 'Gypsum',
+    'خردة': 'Scrap',
+    'خشب': 'Wood',
+    'رمل': 'Sand',
+    'رمل السيليكا': 'Silica Sand',
+    'زجاج ليفي': 'Fiberglass',
+    'زيوت': 'Oils',
+    'سكر': 'Sugar',
+    'سلع إستهلاكية': 'Consumer Goods',
+    'سيراميك': 'Ceramics',
+    'فحم': 'Coal',
+    'فوارغ': 'Empties',
+    'كابلات': 'Cables',
+    'كيماوي': 'Chemicals',
+    'لفات حديد': 'Steel Coils',
+    'معدات': 'Equipment',
+    'منتجات الصلب': 'Steel Products',
+    'مواد بناء': 'Building Materials',
+    'مياه': 'Water',
+    'ورق': 'Paper',
+}
+
+COMMODITY_AR = {v: k for k, v in COMMODITY_EN.items()}
+
+def to_english_commodity(commodity_ar):
+    return COMMODITY_EN.get(commodity_ar, commodity_ar)
+
+def to_arabic_commodity(commodity_en):
+    return COMMODITY_AR.get(commodity_en, commodity_en)
 
 CITY_EN = {
     'جدة': 'Jeddah',
@@ -372,17 +545,45 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
     
     recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     
+    # Get distance - try multiple sources
+    distance = None
+    if len(lane_data) > 0:
+        dist_vals = lane_data[lane_data['distance'] > 0]['distance']
+        if len(dist_vals) > 0:
+            distance = dist_vals.median()
+    
+    if distance is None or distance == 0:
+        distance = DISTANCE_LOOKUP.get(lane)
+    
+    if distance is None or distance == 0:
+        # Try reverse lane
+        reverse_lane = f"{dest_ar} → {pickup_ar}"
+        distance = DISTANCE_LOOKUP.get(reverse_lane)
+    
+    if distance is None or distance == 0:
+        # Try hardcoded distances
+        distance = HARDCODED_DISTANCES.get((pickup_ar, dest_ar))
+    
+    if distance is None or distance == 0:
+        # Log missing distance
+        log_exception('missing_distance', {
+            'pickup_city': pickup_ar,
+            'destination_city': dest_ar,
+            'pickup_en': to_english_city(pickup_ar),
+            'destination_en': to_english_city(dest_ar),
+        })
+        # Fallback to a reasonable estimate
+        distance = 500
+    
     # Historical stats
     if len(lane_data) > 0:
         hist_count = len(lane_data)
         hist_min = int(lane_data['total_carrier_price'].min())
         hist_max = int(lane_data['total_carrier_price'].max())
         hist_median = int(lane_data['total_carrier_price'].median())
-        distance = lane_data['distance'].median()
     else:
         hist_count = 0
         hist_min = hist_max = hist_median = None
-        distance = DISTANCE_LOOKUP.get(lane, 500)
     
     # Recent stats
     if len(recent_data) > 0:
@@ -508,7 +709,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     
     result = {
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
-        'Commodity': commodity,
+        'Commodity': to_english_commodity(commodity),
         'Weight_Tons': round(weight, 1),
         'Distance_km': round(distance, 0),
         'Hist_Count': hist_count,
@@ -550,7 +751,8 @@ dest_cities_ar = sorted(df_knn['destination_city'].unique())
 dest_cities_en = sorted(set([to_english_city(c) for c in dest_cities_ar]))
 vehicle_types_ar = df_knn['vehicle_type'].unique()
 vehicle_types_en = sorted(set([to_english_vehicle(v) for v in vehicle_types_ar]))
-commodities = sorted(df_knn['commodity'].unique())
+commodities_ar = sorted(df_knn['commodity'].unique())
+commodities = sorted(set([to_english_commodity(c) for c in commodities_ar]))
 
 # ============================================
 # APP UI
@@ -593,7 +795,7 @@ with tab1:
     with col2:
         commodity_options = ['Auto-detect'] + commodities
         commodity_select = st.selectbox("Commodity", options=commodity_options, key='single_commodity')
-        commodity_input = None if commodity_select == 'Auto-detect' else commodity_select
+        commodity_input = None if commodity_select == 'Auto-detect' else to_arabic_commodity(commodity_select)
 
     with col3:
         weight = st.number_input("Weight (Tons)", min_value=0.0, max_value=100.0, value=0.0, step=1.0,
@@ -607,24 +809,20 @@ with tab1:
         lane_ar = f"{pickup_city} → {destination_city}"
         
         st.markdown("---")
-        st.header("🎯 Pricing Corridor")
-        st.info(f"**{lane_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
         
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("🟢 ANCHOR", f"{result['Anchor']:,.0f} SAR")
-        with col2:
-            st.metric("🟡 TARGET", f"{result['Target']:,.0f} SAR")
-        with col3:
-            st.metric("🔴 CEILING", f"{result['Ceiling']:,.0f} SAR")
-        with col4:
-            st.metric("💰 MARGIN", f"{result['Margin']:,.0f} SAR", f"{result['Margin_Pct']:.1f}%")
+        # Check if this is a rare lane (no recent history)
+        is_rare_lane = result[f'Recent_{RECENCY_WINDOW}d_Count'] == 0
         
-        st.caption(f"📊 Cost/km: **{result['Cost_Per_KM']:.2f} SAR** | Shipper: {result['Shipper_Rate']:,.0f} SAR | Source: {result['Recommendation_Source']}")
-        
-        # Rare Lane Model (if available)
-        if rare_lane_predictor and 'RareLane_Price' in result:
-            with st.expander("🔮 Rare Lane Model (for sparse lanes)", expanded=False):
+        if is_rare_lane:
+            # RARE LANE - Show different UI
+            st.header("⚠️ Rare Lane - Limited Data")
+            st.warning(f"**{lane_en}** has no loads in the last {RECENCY_WINDOW} days. Using model prediction.")
+            
+            st.info(f"🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
+            
+            # Show Rare Lane Model prediction prominently
+            if rare_lane_predictor and 'RareLane_Price' in result:
+                st.subheader("🔮 Model Prediction (Best Estimate)")
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Predicted Price", f"{result['RareLane_Price']:,.0f} SAR")
@@ -633,68 +831,116 @@ with tab1:
                 with col3:
                     st.metric("Confidence", result['RareLane_Confidence'])
                 st.caption(f"Method: {result['RareLane_Method']} | CPK: {result['RareLane_CPK']:.3f} SAR/km")
-        
-        # Historical & Recent Stats
-        st.markdown("---")
-        st.subheader(f"📊 Price History: {lane_en} ({result['Vehicle_Type']})")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Historical (All Time)**")
+            
+            # Show historical stats if available
             if result['Hist_Count'] > 0:
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [f"{result['Hist_Count']} loads", f"{result['Hist_Min']:,.0f} SAR",
-                              f"{result['Hist_Median']:,.0f} SAR", f"{result['Hist_Max']:,.0f} SAR"]
-                }), use_container_width=True, hide_index=True)
+                st.markdown("---")
+                st.subheader("📊 Historical Data (All Time)")
+                st.caption(f"Last load was over {RECENCY_WINDOW} days ago")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Loads", result['Hist_Count'])
+                with col2:
+                    st.metric("Min", f"{result['Hist_Min']:,.0f} SAR")
+                with col3:
+                    st.metric("Median", f"{result['Hist_Median']:,.0f} SAR")
+                with col4:
+                    st.metric("Max", f"{result['Hist_Max']:,.0f} SAR")
             else:
-                st.warning("No historical data")
+                st.info("No historical data available for this lane.")
         
-        with col2:
-            st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
-            if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
-                              f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR",
-                              f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR",
-                              f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR"]
-                }), use_container_width=True, hide_index=True)
+        else:
+            # NORMAL LANE - Show full pricing corridor
+            st.header("🎯 Pricing Corridor")
+            st.info(f"**{lane_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("🟢 ANCHOR", f"{result['Anchor']:,.0f} SAR")
+            with col2:
+                st.metric("🟡 TARGET", f"{result['Target']:,.0f} SAR")
+            with col3:
+                st.metric("🔴 CEILING", f"{result['Ceiling']:,.0f} SAR")
+            with col4:
+                st.metric("💰 MARGIN", f"{result['Margin']:,.0f} SAR", f"{result['Margin_Pct']:.1f}%")
+            
+            st.caption(f"📊 Cost/km: **{result['Cost_Per_KM']:.2f} SAR** | Shipper: {result['Shipper_Rate']:,.0f} SAR | Source: {result['Recommendation_Source']}")
+            
+            # Rare Lane Model (if available) - show in expander for comparison
+            if rare_lane_predictor and 'RareLane_Price' in result:
+                with st.expander("🔮 Rare Lane Model (for comparison)", expanded=False):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Predicted Price", f"{result['RareLane_Price']:,.0f} SAR")
+                    with col2:
+                        st.metric("Price Range", result['RareLane_Range'])
+                    with col3:
+                        st.metric("Confidence", result['RareLane_Confidence'])
+                    st.caption(f"Method: {result['RareLane_Method']} | CPK: {result['RareLane_CPK']:.3f} SAR/km")
+            
+            # Historical & Recent Stats
+            st.markdown("---")
+            st.subheader(f"📊 Price History: {lane_en} ({result['Vehicle_Type']})")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Historical (All Time)**")
+                if result['Hist_Count'] > 0:
+                    st.dataframe(pd.DataFrame({
+                        'Metric': ['Count', 'Min', 'Median', 'Max'],
+                        'Value': [f"{result['Hist_Count']} loads", f"{result['Hist_Min']:,.0f} SAR",
+                                  f"{result['Hist_Median']:,.0f} SAR", f"{result['Hist_Max']:,.0f} SAR"]
+                    }), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("No historical data")
+            
+            with col2:
+                st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
+                if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
+                    st.dataframe(pd.DataFrame({
+                        'Metric': ['Count', 'Min', 'Median', 'Max'],
+                        'Value': [f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
+                                  f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR",
+                                  f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR",
+                                  f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR"]
+                    }), use_container_width=True, hide_index=True)
+                else:
+                    st.warning(f"No loads in last {RECENCY_WINDOW} days")
+            
+            # AMMUNITION - Only for non-rare lanes
+            st.markdown("---")
+            st.subheader("🚚 Your Ammunition (Recent Matches)")
+            
+            same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, commodity_input)
+            
+            commodity_used = to_english_commodity(commodity_input) if commodity_input else result['Commodity']
+            if len(same_samples) > 0:
+                st.markdown(f"**Same Commodity ({commodity_used}):**")
+                same_samples['Lane_EN'] = same_samples['pickup_city'].apply(to_english_city) + ' → ' + same_samples['destination_city'].apply(to_english_city)
+                same_samples['Commodity_EN'] = same_samples['commodity'].apply(to_english_commodity)
+                display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
+                display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
+                st.dataframe(display_same, use_container_width=True, hide_index=True)
             else:
-                st.warning(f"No loads in last {RECENCY_WINDOW} days")
-        
-        # AMMUNITION
-        st.markdown("---")
-        st.subheader("🚚 Your Ammunition (Recent Matches)")
-        
-        same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, commodity_input)
-        
-        commodity_used = commodity_input if commodity_input else result['Commodity']
-        if len(same_samples) > 0:
-            st.markdown(f"**Same Commodity ({commodity_used}):**")
-            same_samples['Lane_EN'] = same_samples['pickup_city'].apply(to_english_city) + ' → ' + same_samples['destination_city'].apply(to_english_city)
-            display_same = same_samples[['pickup_date', 'Lane_EN', 'commodity', 'total_carrier_price', 'days_ago']].copy()
-            display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
-            display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
-            display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
-            st.dataframe(display_same, use_container_width=True, hide_index=True)
-        else:
-            st.caption(f"No recent loads with {commodity_used}")
-        
-        if len(other_samples) > 0:
-            st.markdown("**Other Commodities:**")
-            other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
-            display_other = other_samples[['pickup_date', 'Lane_EN', 'commodity', 'total_carrier_price', 'days_ago']].copy()
-            display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
-            display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
-            display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
-            st.dataframe(display_other, use_container_width=True, hide_index=True)
-        else:
-            st.caption("No recent loads with other commodities")
-        
-        total_shown = len(same_samples) + len(other_samples)
-        if total_shown > 0:
-            st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
+                st.caption(f"No recent loads with {commodity_used}")
+            
+            if len(other_samples) > 0:
+                st.markdown("**Other Commodities:**")
+                other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
+                other_samples['Commodity_EN'] = other_samples['commodity'].apply(to_english_commodity)
+                display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
+                display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
+                st.dataframe(display_other, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No recent loads with other commodities")
+            
+            total_shown = len(same_samples) + len(other_samples)
+            if total_shown > 0:
+                st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
 
 # ============================================
 # TAB 2: BULK ROUTE LOOKUP
@@ -746,8 +992,20 @@ with tab2:
                     
                     if not pickup_matched and pickup_ar not in VALID_CITIES_AR:
                         unmatched_cities.append({'Row': idx+1, 'Column': 'From', 'Original': pickup_raw})
+                        log_exception('unmatched_city', {
+                            'row': idx+1,
+                            'column': 'From',
+                            'original_value': pickup_raw,
+                            'normalized_to': pickup_ar,
+                        })
                     if not dest_matched and dest_ar not in VALID_CITIES_AR:
                         unmatched_cities.append({'Row': idx+1, 'Column': 'To', 'Original': dest_raw})
+                        log_exception('unmatched_city', {
+                            'row': idx+1,
+                            'column': 'To',
+                            'original_value': dest_raw,
+                            'normalized_to': dest_ar,
+                        })
                     
                     if vehicle_raw in ['', 'nan', 'None', 'Auto', 'auto']:
                         vehicle_ar = DEFAULT_VEHICLE_AR
@@ -790,5 +1048,29 @@ with tab2:
         except Exception as e:
             st.error(f"Error: {str(e)}")
 
+# ============================================
+# ERROR LOG SECTION
+# ============================================
 st.markdown("---")
+
+# Show error log download if there are any errors
+error_log_csv = get_error_log_csv()
+if error_log_csv:
+    with st.expander("⚠️ Exception Log (unmatched cities, missing distances)", expanded=False):
+        st.caption(f"{len(st.session_state.error_log)} exceptions logged this session")
+        st.dataframe(pd.DataFrame(st.session_state.error_log), use_container_width=True, hide_index=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Error Log",
+                error_log_csv,
+                "pricing_error_log.csv",
+                "text/csv"
+            )
+        with col2:
+            if st.button("🗑️ Clear Log"):
+                clear_error_log()
+                st.rerun()
+
 st.caption("Freight Pricing Tool | Default: Flatbed Trailer | All prices in SAR")

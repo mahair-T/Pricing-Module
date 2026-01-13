@@ -620,13 +620,16 @@ class BlendPredictor:
 def load_models():
     MODEL_DIR = os.path.join(APP_DIR, 'model_export')
     
-    carrier_model = CatBoostRegressor()
-    
+    # CatBoost model is optional (not used in main pricing cascade)
+    carrier_model = None
     json_path = os.path.join(MODEL_DIR, 'carrier_model.json')
+    cbm_path = os.path.join(MODEL_DIR, 'carrier_model.cbm')
     if os.path.exists(json_path):
+        carrier_model = CatBoostRegressor()
         carrier_model.load_model(json_path, format='json')
-    else:
-        carrier_model.load_model(os.path.join(MODEL_DIR, 'carrier_model.cbm'))
+    elif os.path.exists(cbm_path):
+        carrier_model = CatBoostRegressor()
+        carrier_model.load_model(cbm_path)
     
     with open(os.path.join(MODEL_DIR, 'config.pkl'), 'rb') as f:
         config = pickle.load(f)

@@ -151,8 +151,6 @@ def clear_error_log():
 # ============================================
 # FIXED SETTINGS
 # ============================================
-ANCHOR_DISCOUNT = 12
-CEILING_PREMIUM = 5
 N_SIMILAR = 10
 MIN_DAYS_APART = 5
 MAX_AGE_DAYS = 180
@@ -167,6 +165,38 @@ ERROR_BARS = {
     'Very Low': 0.35
 }
 
+# Margin settings based on backhaul probability
+MARGIN_HIGH_BACKHAUL = 0.12      # 12% margin when good backhaul
+MARGIN_MEDIUM_BACKHAUL = 0.18   # 18% margin
+MARGIN_LOW_BACKHAUL = 0.25      # 25% margin when poor backhaul
+MARGIN_UNKNOWN = 0.20           # 20% default when no data
+
+# Backhaul thresholds (inbound/outbound CPK ratio)
+BACKHAUL_HIGH_THRESHOLD = 0.85   # Ratio > 0.85 = High backhaul prob
+BACKHAUL_MEDIUM_THRESHOLD = 0.65 # Ratio 0.65-0.85 = Medium
+# Below 0.65 = Low backhaul probability
+
+# ============================================
+# LOAD CITY NORMALIZATION WITH REGIONS
+# ============================================
+@st.cache_resource
+def load_city_normalization():
+    """Load city normalization with regions."""
+    norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_with_regions.csv')
+    if os.path.exists(norm_path):
+        df = pd.read_csv(norm_path)
+        # Build lookup dicts
+        variant_to_canonical = {}
+        variant_to_region = {}
+        for _, row in df.iterrows():
+            variant_to_canonical[row['variant']] = row['canonical']
+            if pd.notna(row.get('region')):
+                variant_to_region[row['variant']] = row['region']
+        return variant_to_canonical, variant_to_region
+    return {}, {}
+
+CITY_TO_CANONICAL, CITY_TO_REGION = load_city_normalization()
+
 # ============================================
 # CITY NORMALIZATION - Comprehensive
 # ============================================
@@ -175,13 +205,13 @@ CITY_NORMALIZE = {
     'Jeddah': 'جدة', 'Jiddah': 'جدة', 'Jedda': 'جدة', 'jeddah': 'جدة',
     'Riyadh': 'الرياض', 'Riyad': 'الرياض', 'riyadh': 'الرياض',
     'Dammam': 'الدمام', 'Damam': 'الدمام', 'dammam': 'الدمام',
-    'Makkah': 'مكة المكرمة', 'Mecca': 'مكة المكرمة', 'Mekkah': 'مكة المكرمة', 'makkah': 'مكة المكرمة',
-    'Madinah': 'المدينة المنورة', 'Madina': 'المدينة المنورة', 'Medina': 'المدينة المنورة', 'madinah': 'المدينة المنورة',
-    'Yanbu': 'ينبع', 'Yenbu': 'ينبع', 'yanbu': 'ينبع',
-    'Rabigh': 'رابغ', 'rabigh': 'رابغ',
-    'Tabuk': 'تبوك', 'Tabouk': 'تبوك', 'tabuk': 'تبوك',
-    'Taif': 'الطائف', 'Tayef': 'الطائف', 'taif': 'الطائف',
-    'Jubail': 'الجبيل', 'Al Jubail': 'الجبيل', 'Al-Jubail': 'الجبيل', 'jubail': 'الجبيل',
+    'Makkah': 'مكة المكرمة', 'Mecca': 'مكة المكرمة', 'Mekkah': 'مكة المكرمة',
+    'Madinah': 'المدينة المنورة', 'Madina': 'المدينة المنورة', 'Medina': 'المدينة المنورة',
+    'Yanbu': 'ينبع', 'Yenbu': 'ينبع',
+    'Rabigh': 'رابغ',
+    'Tabuk': 'تبوك', 'Tabouk': 'تبوك',
+    'Taif': 'الطائف', 'Tayef': 'الطائف',
+    'Jubail': 'الجبيل', 'Al Jubail': 'الجبيل', 'Al-Jubail': 'الجبيل',
     'Al Hasa': 'الْأَحْسَاء', 'Al-Hasa': 'الْأَحْسَاء', 'Ahsa': 'الْأَحْسَاء', 'Hofuf': 'الْأَحْسَاء',
     'Al Kharj': 'الخرج', 'Al-Kharij': 'الخرج', 'Kharj': 'الخرج',
     'Qassim': 'القصيم', 'Al Qassim': 'القصيم', 'Al-Qassim': 'القصيم', 'Qaseem': 'القصيم',
@@ -197,7 +227,6 @@ CITY_NORMALIZE = {
     'Buraidah': 'القصيم', 'Buraydah': 'القصيم',
     'Al Khobar': 'Al-Khobar',
     'Duba': 'ضبا',
-    # Keep English names that don't have Arabic equivalents
     'Abha': 'Abha',
     'Khamis Mushait': 'Khamis Mushait', 'Khamis': 'Khamis Mushait',
     'Umluj': 'Umluj',
@@ -227,11 +256,11 @@ CITY_NORMALIZE = {
     'Al Qatif': 'Al Qatif',
     'Murjan': 'Murjan',
     "Al Majma'ah": "Al Majma'ah",
-    # Arabic to standard Arabic
+    # Arabic variations
     'جدة': 'جدة', 'جده': 'جدة',
     'الرياض': 'الرياض', 'رياض': 'الرياض',
     'الدمام': 'الدمام', 'دمام': 'الدمام',
-    'مكة': 'مكة المكرمة', 'مكه': 'مكة المكرمة', 'مكة المكرمة': 'مكة المكرمة', 'Mekkah ': 'مكة المكرمة',
+    'مكة': 'مكة المكرمة', 'مكه': 'مكة المكرمة', 'مكة المكرمة': 'مكة المكرمة',
     'المدينة': 'المدينة المنورة', 'المدينه': 'المدينة المنورة', 'المدينة المنورة': 'المدينة المنورة',
     'الطائف': 'الطائف', 'طائف': 'الطائف',
     'تبوك': 'تبوك',
@@ -294,7 +323,6 @@ CITY_EN = {
     'ضبا': 'Duba',
     'الخرمة': 'Al Khurmah',
     'الشعيبة': 'Al Shuaiba',
-    # English stays English
     'Abha': 'Abha',
     'Khamis Mushait': 'Khamis Mushait',
     'Umluj': 'Umluj',
@@ -335,6 +363,10 @@ def normalize_city(city_raw):
         return None, False
     city = str(city_raw).strip()
     
+    # Check city normalization file first
+    if city in CITY_TO_CANONICAL:
+        return CITY_TO_CANONICAL[city], True
+    
     # Direct lookup
     if city in CITY_NORMALIZE:
         return CITY_NORMALIZE[city], True
@@ -350,6 +382,12 @@ def normalize_city(city_raw):
             return val, True
     
     return city, False
+
+def get_city_region(city):
+    """Get region for a city."""
+    if city in CITY_TO_REGION:
+        return CITY_TO_REGION[city]
+    return None
 
 def to_english_city(city_ar):
     return CITY_EN.get(city_ar, city_ar)
@@ -431,9 +469,11 @@ def to_arabic_commodity(commodity_en):
     return COMMODITY_AR.get(commodity_en, commodity_en)
 
 # ============================================
-# RARE LANE PREDICTOR CLASS
+# INDEX + SHRINKAGE MODEL (Rare Lane Model)
 # ============================================
-class RareLanePredictor:
+class IndexShrinkagePredictor:
+    """Index + Shrinkage model for lanes with some historical data."""
+    
     def __init__(self, model_artifacts):
         m = model_artifacts
         self.current_index = m['current_index']
@@ -443,9 +483,9 @@ class RareLanePredictor:
         self.pickup_priors = m['pickup_priors']
         self.dest_priors = m['dest_priors']
         self.lane_stats = m['lane_stats']
-        self.city_to_region = m['city_to_region']
-        self.regional_cpk = {tuple(k.split('|')): v for k, v in m['regional_cpk'].items()}
-        self.model_date = m['model_date']
+        self.city_to_region = m.get('city_to_region', {})
+        self.regional_cpk = {tuple(k.split('|')): v for k, v in m.get('regional_cpk', {}).items()} if isinstance(list(m.get('regional_cpk', {}).keys())[0] if m.get('regional_cpk') else '', str) else m.get('regional_cpk', {})
+        self.model_date = m.get('model_date', 'Unknown')
     
     def _predict_index(self, lane):
         if lane in self.lane_multipliers:
@@ -466,23 +506,19 @@ class RareLanePredictor:
         else:
             return city_prior
     
-    def _predict_regional(self, pickup_city, dest_city):
-        p_region = self.city_to_region.get(pickup_city)
-        d_region = self.city_to_region.get(dest_city)
-        if p_region and d_region:
-            return self.regional_cpk.get((p_region, d_region))
-        return None
+    def has_lane_data(self, lane):
+        """Check if we have data for this lane."""
+        return lane in self.lane_stats or lane in self.lane_multipliers
     
     def predict(self, pickup_city, dest_city, distance_km=None):
         lane = f"{pickup_city} → {dest_city}"
         
         idx_pred = self._predict_index(lane)
         shrink_pred = self._predict_shrinkage(lane, pickup_city, dest_city)
-        regional_pred = self._predict_regional(pickup_city, dest_city)
         
         if idx_pred is not None and shrink_pred is not None:
             predicted_cpk = (idx_pred + shrink_pred) / 2
-            method = 'Index + Shrink Ensemble'
+            method = 'Index + Shrinkage'
             if lane in self.lane_stats:
                 n = self.lane_stats[lane]['lane_n']
                 confidence = 'High' if n >= 20 else 'Medium' if n >= 5 else 'Low'
@@ -490,15 +526,72 @@ class RareLanePredictor:
                 confidence = 'Low'
         elif shrink_pred is not None:
             predicted_cpk = shrink_pred
-            method = 'Shrinkage (city priors)'
+            method = 'Shrinkage'
             confidence = 'Medium'
-        elif regional_pred is not None:
-            predicted_cpk = regional_pred
-            method = 'Regional Fallback'
-            confidence = 'Low'  # Regional is ALWAYS Low confidence
         else:
             predicted_cpk = self.global_mean
             method = 'Global Mean'
+            confidence = 'Very Low'
+        
+        error_pct = ERROR_BARS.get(confidence, 0.25)
+        price_low = predicted_cpk * (1 - error_pct)
+        price_high = predicted_cpk * (1 + error_pct)
+        
+        result = {
+            'predicted_cpk': round(predicted_cpk, 3),
+            'cpk_low': round(price_low, 3),
+            'cpk_high': round(price_high, 3),
+            'method': method,
+            'confidence': confidence,
+        }
+        
+        if distance_km and distance_km > 0:
+            result['predicted_cost'] = round(predicted_cpk * distance_km, 0)
+            result['cost_low'] = round(price_low * distance_km, 0)
+            result['cost_high'] = round(price_high * distance_km, 0)
+        
+        return result
+
+# ============================================
+# BLEND MODEL (New Lane Model - 0.7 Regional)
+# ============================================
+class BlendPredictor:
+    """Blend model (0.7 Regional + 0.3 City) for completely new lanes."""
+    
+    def __init__(self, model_artifacts):
+        m = model_artifacts
+        self.config = m['config']
+        self.regional_weight = self.config.get('regional_weight', 0.7)
+        self.current_index = m['current_index']
+        self.pickup_city_mult = m['pickup_city_mult']
+        self.dest_city_mult = m['dest_city_mult']
+        self.city_to_region = m['city_to_region']
+        self.regional_cpk = m['regional_cpk']
+        self.model_date = self.config.get('training_date', 'Unknown')
+    
+    def predict(self, pickup_city, dest_city, distance_km=None):
+        # Get regions
+        p_region = self.city_to_region.get(pickup_city)
+        d_region = self.city_to_region.get(dest_city)
+        
+        # Get regional CPK
+        regional_cpk = None
+        if p_region and d_region:
+            regional_cpk = self.regional_cpk.get((p_region, d_region))
+        
+        # Get city multipliers
+        p_mult = self.pickup_city_mult.get(pickup_city, 1.0)
+        d_mult = self.dest_city_mult.get(dest_city, 1.0)
+        city_cpk = p_mult * d_mult * self.current_index
+        
+        # Blend
+        if regional_cpk is not None:
+            predicted_cpk = self.regional_weight * regional_cpk + (1 - self.regional_weight) * city_cpk
+            method = f'Blend ({self.regional_weight:.0%} Regional)'
+            confidence = 'Low'  # New lane model is always Low confidence
+        else:
+            predicted_cpk = city_cpk
+            method = 'City Multipliers'
             confidence = 'Very Low'
         
         error_pct = ERROR_BARS.get(confidence, 0.25)
@@ -553,27 +646,37 @@ def load_models():
     else:
         distance_matrix = {}
     
-    # Load rare lane model if available
+    # Load Index + Shrinkage model
     rare_lane_path = os.path.join(MODEL_DIR, 'rare_lane_models.pkl')
-    rare_lane_predictor = None
+    index_shrink_predictor = None
     if os.path.exists(rare_lane_path):
         with open(rare_lane_path, 'rb') as f:
             rare_lane_artifacts = pickle.load(f)
-        rare_lane_predictor = RareLanePredictor(rare_lane_artifacts)
+        index_shrink_predictor = IndexShrinkagePredictor(rare_lane_artifacts)
+    
+    # Load Blend model (new lane model)
+    blend_path = os.path.join(MODEL_DIR, 'new_lane_model_blend.pkl')
+    blend_predictor = None
+    if os.path.exists(blend_path):
+        with open(blend_path, 'rb') as f:
+            blend_artifacts = pickle.load(f)
+        blend_predictor = BlendPredictor(blend_artifacts)
     
     return {
         'carrier_model': carrier_model,
         'config': config,
         'df_knn': df_knn,
         'distance_matrix': distance_matrix,
-        'rare_lane_predictor': rare_lane_predictor
+        'index_shrink_predictor': index_shrink_predictor,
+        'blend_predictor': blend_predictor
     }
 
 models = load_models()
 config = models['config']
 df_knn = models['df_knn']
 DISTANCE_MATRIX = models['distance_matrix']
-rare_lane_predictor = models['rare_lane_predictor']
+index_shrink_predictor = models['index_shrink_predictor']
+blend_predictor = models['blend_predictor']
 
 FEATURES = config['FEATURES']
 ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
@@ -583,6 +686,67 @@ df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
 VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_city'].unique())
 
 # ============================================
+# BACKHAUL PROBABILITY CALCULATION
+# ============================================
+@st.cache_data
+def calculate_city_cpk_stats():
+    """Calculate inbound and outbound CPK for each city for backhaul estimation."""
+    city_stats = {}
+    
+    # Calculate outbound CPK (city as pickup)
+    outbound = df_knn.groupby('pickup_city').agg({
+        'total_carrier_price': 'median',
+        'distance': 'median'
+    }).reset_index()
+    outbound['outbound_cpk'] = outbound['total_carrier_price'] / outbound['distance']
+    
+    # Calculate inbound CPK (city as destination)
+    inbound = df_knn.groupby('destination_city').agg({
+        'total_carrier_price': 'median',
+        'distance': 'median'
+    }).reset_index()
+    inbound['inbound_cpk'] = inbound['total_carrier_price'] / inbound['distance']
+    
+    # Merge
+    for _, row in outbound.iterrows():
+        city = row['pickup_city']
+        if city not in city_stats:
+            city_stats[city] = {}
+        city_stats[city]['outbound_cpk'] = row['outbound_cpk']
+    
+    for _, row in inbound.iterrows():
+        city = row['destination_city']
+        if city not in city_stats:
+            city_stats[city] = {}
+        city_stats[city]['inbound_cpk'] = row['inbound_cpk']
+    
+    return city_stats
+
+CITY_CPK_STATS = calculate_city_cpk_stats()
+
+def get_backhaul_probability(dest_city):
+    """
+    Determine backhaul probability based on inbound/outbound CPK ratio.
+    High ratio = good backhaul availability = lower margin needed.
+    """
+    stats = CITY_CPK_STATS.get(dest_city, {})
+    
+    inbound_cpk = stats.get('inbound_cpk')
+    outbound_cpk = stats.get('outbound_cpk')
+    
+    if inbound_cpk is None or outbound_cpk is None or outbound_cpk == 0:
+        return 'Unknown', MARGIN_UNKNOWN, None
+    
+    ratio = inbound_cpk / outbound_cpk
+    
+    if ratio >= BACKHAUL_HIGH_THRESHOLD:
+        return 'High', MARGIN_HIGH_BACKHAUL, ratio
+    elif ratio >= BACKHAUL_MEDIUM_THRESHOLD:
+        return 'Medium', MARGIN_MEDIUM_BACKHAUL, ratio
+    else:
+        return 'Low', MARGIN_LOW_BACKHAUL, ratio
+
+# ============================================
 # DISTANCE LOOKUP FUNCTION
 # ============================================
 def get_distance(pickup_ar, dest_ar, lane_data=None):
@@ -590,15 +754,16 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     Get distance between two cities with consistent priority:
     1. Historical distance from lane data (if provided and has data)
     2. Reverse lane historical distance
-    3. Hardcoded distance matrix
-    4. Reverse in distance matrix
+    3. DISTANCE_LOOKUP from config
+    4. Hardcoded distance matrix
+    5. Reverse in distance matrix
     
     Returns (distance, source)
     """
     lane = f"{pickup_ar} → {dest_ar}"
     reverse_lane = f"{dest_ar} → {pickup_ar}"
     
-    # 1. Try historical distance from lane data (passed in or look up)
+    # 1. Try historical distance from lane data
     if lane_data is not None and len(lane_data) > 0:
         dist_vals = lane_data[lane_data['distance'] > 0]['distance']
         if len(dist_vals) > 0:
@@ -611,7 +776,7 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
         if len(dist_vals) > 0:
             return dist_vals.median(), 'Historical (reverse)'
     
-    # 3. Try DISTANCE_LOOKUP from config (historical aggregates)
+    # 3. Try DISTANCE_LOOKUP from config
     dist = DISTANCE_LOOKUP.get(lane)
     if dist and dist > 0:
         return dist, 'Historical'
@@ -640,6 +805,94 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     })
     
     return 0, 'Missing'
+
+# ============================================
+# ROUNDING HELPERS
+# ============================================
+def round_to_nearest(value, nearest):
+    """Round to nearest value (e.g., 100 or 50)."""
+    if value is None or pd.isna(value):
+        return None
+    return int(round(value / nearest) * nearest)
+
+# ============================================
+# PRICE CASCADE FUNCTION
+# ============================================
+def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None):
+    """
+    Calculate Buy Price and Sell Price using cascade:
+    1. Recency (median of recent loads)
+    2. Index + Shrinkage upper bound
+    3. Blend 0.7 upper bound
+    
+    Returns dict with pricing info.
+    """
+    lane = f"{pickup_ar} → {dest_ar}"
+    
+    # Get lane data if not provided
+    if lane_data is None:
+        lane_data = df_knn[
+            (df_knn['lane'] == lane) & 
+            (df_knn['vehicle_type'] == vehicle_ar)
+        ].copy()
+    
+    recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW] if len(lane_data) > 0 else pd.DataFrame()
+    recent_count = len(recent_data)
+    
+    buy_price = None
+    model_used = None
+    confidence = None
+    
+    # CASCADE 1: Recency (median of recent loads)
+    if recent_count >= 1:
+        recent_median = recent_data['total_carrier_price'].median()
+        buy_price = recent_median
+        model_used = 'Recency'
+        confidence = 'High' if recent_count >= 5 else 'Medium' if recent_count >= 2 else 'Low'
+    
+    # CASCADE 2: Index + Shrinkage upper bound
+    elif index_shrink_predictor and index_shrink_predictor.has_lane_data(lane):
+        pred = index_shrink_predictor.predict(pickup_ar, dest_ar, distance_km)
+        buy_price = pred.get('cost_high', pred.get('predicted_cost'))
+        model_used = pred['method']
+        confidence = pred['confidence']
+    
+    # CASCADE 3: Blend 0.7 upper bound
+    elif blend_predictor:
+        pred = blend_predictor.predict(pickup_ar, dest_ar, distance_km)
+        buy_price = pred.get('cost_high', pred.get('predicted_cost'))
+        model_used = pred['method']
+        confidence = pred['confidence']
+    
+    # Fallback
+    else:
+        if distance_km and distance_km > 0:
+            buy_price = distance_km * 1.8 * 1.25  # Default CPK * upper bound
+            model_used = 'Default CPK'
+            confidence = 'Very Low'
+    
+    # Round buy price to nearest 100
+    buy_price_rounded = round_to_nearest(buy_price, 100)
+    
+    # Calculate sell price based on backhaul probability
+    backhaul_prob, margin, backhaul_ratio = get_backhaul_probability(dest_ar)
+    
+    if buy_price_rounded:
+        sell_price = buy_price_rounded * (1 + margin)
+        sell_price_rounded = round_to_nearest(sell_price, 50)
+    else:
+        sell_price_rounded = None
+    
+    return {
+        'buy_price': buy_price_rounded,
+        'sell_price': sell_price_rounded,
+        'target_margin': f"{margin:.0%}",
+        'backhaul_probability': backhaul_prob,
+        'backhaul_ratio': round(backhaul_ratio, 2) if backhaul_ratio else None,
+        'model_used': model_used,
+        'confidence': confidence,
+        'recent_count': recent_count,
+    }
 
 # ============================================
 # SAMPLE SELECTION FOR AMMUNITION
@@ -692,53 +945,26 @@ def get_ammunition_loads(lane, vehicle_ar, commodity=None):
     return select_spaced_samples(same_commodity, 5), select_spaced_samples(other_commodity, 5)
 
 # ============================================
-# BULK LOOKUP - SIMPLIFIED
+# BULK LOOKUP
 # ============================================
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
-    """Lookup route with new output format."""
+    """Lookup route with Buy/Sell pricing."""
     if vehicle_ar is None or vehicle_ar in ['', 'Auto', 'auto', None]:
         vehicle_ar = DEFAULT_VEHICLE_AR
     
     lane = f"{pickup_ar} → {dest_ar}"
     
-    # Get lane data first
+    # Get lane data
     lane_data = df_knn[
         (df_knn['lane'] == lane) & 
         (df_knn['vehicle_type'] == vehicle_ar)
     ].copy()
     
-    # Get distance with lane data for historical lookup
+    # Get distance
     distance, distance_source = get_distance(pickup_ar, dest_ar, lane_data)
     
-    recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
-    
-    # Recent stats
-    recent_count = len(recent_data)
-    recent_median = recent_data['total_carrier_price'].median() if recent_count > 0 else None
-    
-    # Determine recommended price and model
-    if recent_count >= 1 and recent_median is not None:
-        recommended = int(recent_median)
-        model_chosen = 'Recency'
-        confidence = 'High' if recent_count >= 5 else 'Medium' if recent_count >= 2 else 'Low'
-    else:
-        # Use rare lane model upper bound
-        if rare_lane_predictor and distance > 0:
-            rare_pred = rare_lane_predictor.predict(pickup_ar, dest_ar, distance)
-            recommended = int(rare_pred.get('cost_high', 0))
-            confidence = rare_pred['confidence']
-        else:
-            recommended = None
-            confidence = 'Very Low'
-        model_chosen = 'Rare Lane'
-    
-    # Get model predictions for comparison
-    model_prediction = None
-    model_lower = None
-    if rare_lane_predictor and distance > 0:
-        rare_pred = rare_lane_predictor.predict(pickup_ar, dest_ar, distance)
-        model_prediction = int(rare_pred.get('predicted_cost', 0))
-        model_lower = int(rare_pred.get('cost_low', 0))
+    # Calculate prices using cascade
+    pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance, lane_data)
     
     result = {
         'From': to_english_city(pickup_ar),
@@ -746,12 +972,13 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
         'Distance_km': int(distance) if distance else 0,
         'Distance_Source': distance_source,
-        'Recommended_Price': recommended,
-        'Recent_Count': recent_count,
-        'Model_Prediction': model_prediction,
-        'Model_Lower_Bound': model_lower,
-        'Model_Chosen': model_chosen,
-        'Confidence': confidence,
+        'Buy_Price': pricing['buy_price'],
+        'Sell_Price': pricing['sell_price'],
+        'Target_Margin': pricing['target_margin'],
+        'Backhaul_Prob': pricing['backhaul_probability'],
+        'Recent_Count': pricing['recent_count'],
+        'Model_Used': pricing['model_used'],
+        'Confidence': pricing['confidence'],
     }
     
     return result
@@ -790,10 +1017,10 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         comm_weights = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
         weight = comm_weights.median() if len(comm_weights) > 0 else df_knn['weight'].median()
     
-    # Get distance with lane data for proper priority
+    # Get distance
     distance, distance_source = get_distance(pickup_ar, dest_ar, lane_data)
     if distance == 0:
-        distance = 500  # Last resort default
+        distance = 500
         distance_source = 'Default'
     
     if len(lane_data) > 0:
@@ -804,31 +1031,11 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     is_same_city = (pickup_ar == dest_ar)
     is_multistop = 0 if is_same_city else (int(lane_data['is_multistop'].mode().iloc[0]) if len(lane_data) > 0 else 0)
     
-    # Determine if this is a rare lane
+    # Calculate prices using cascade
+    pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance, lane_data)
+    
+    # Determine if rare lane
     is_rare_lane = recent_count == 0
-    
-    # Calculate recommended price
-    if recent_count >= 2:
-        actual_avg = recent_data['total_carrier_price'].mean()
-        recommended = actual_avg
-        source = "Recent Median"
-    elif hist_count >= 2:
-        actual_avg = lane_data['total_carrier_price'].mean()
-        recommended = actual_avg
-        source = "Historical Average"
-    else:
-        # Use rare lane model
-        if rare_lane_predictor:
-            rare_pred = rare_lane_predictor.predict(pickup_ar, dest_ar, distance)
-            recommended = rare_pred.get('predicted_cost', distance * 1.8)
-        else:
-            recommended = distance * 1.8  # Fallback CPK
-        source = "Rare Lane Model"
-    
-    anchor = recommended * (1 - ANCHOR_DISCOUNT / 100)
-    target = recommended
-    ceiling = recommended * (1 + CEILING_PREMIUM / 100)
-    cost_per_km = recommended / distance if distance > 0 else None
     
     result = {
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
@@ -844,23 +1051,29 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         f'Recent_{RECENCY_WINDOW}d_Min': round(recent_min, 0) if recent_min else None,
         f'Recent_{RECENCY_WINDOW}d_Median': round(recent_median, 0) if recent_median else None,
         f'Recent_{RECENCY_WINDOW}d_Max': round(recent_max, 0) if recent_max else None,
-        'Recommended_Carrier': round(recommended, 0),
-        'Recommendation_Source': source,
-        'Cost_Per_KM': round(cost_per_km, 2) if cost_per_km else None,
-        'Anchor': round(anchor, 0),
-        'Target': round(target, 0),
-        'Ceiling': round(ceiling, 0),
+        'Buy_Price': pricing['buy_price'],
+        'Sell_Price': pricing['sell_price'],
+        'Target_Margin': pricing['target_margin'],
+        'Backhaul_Probability': pricing['backhaul_probability'],
+        'Backhaul_Ratio': pricing['backhaul_ratio'],
+        'Model_Used': pricing['model_used'],
+        'Confidence': pricing['confidence'],
+        'Cost_Per_KM': round(pricing['buy_price'] / distance, 2) if pricing['buy_price'] and distance > 0 else None,
         'Is_Rare_Lane': is_rare_lane,
     }
     
-    # Add rare lane prediction for comparison
-    if rare_lane_predictor:
-        rare_pred = rare_lane_predictor.predict(pickup_ar, dest_ar, distance)
-        result['RareLane_CPK'] = rare_pred['predicted_cpk']
-        result['RareLane_Price'] = rare_pred.get('predicted_cost')
-        result['RareLane_Range'] = f"{rare_pred.get('cost_low', 0):,.0f} - {rare_pred.get('cost_high', 0):,.0f}"
-        result['RareLane_Method'] = rare_pred['method']
-        result['RareLane_Confidence'] = rare_pred['confidence']
+    # Add model predictions for comparison
+    if index_shrink_predictor:
+        idx_pred = index_shrink_predictor.predict(pickup_ar, dest_ar, distance)
+        result['IndexShrink_Price'] = idx_pred.get('predicted_cost')
+        result['IndexShrink_Upper'] = idx_pred.get('cost_high')
+        result['IndexShrink_Method'] = idx_pred['method']
+    
+    if blend_predictor:
+        blend_pred = blend_predictor.predict(pickup_ar, dest_ar, distance)
+        result['Blend_Price'] = blend_pred.get('predicted_cost')
+        result['Blend_Upper'] = blend_pred.get('cost_high')
+        result['Blend_Method'] = blend_pred['method']
     
     return result
 
@@ -880,9 +1093,13 @@ commodities = sorted(set([to_english_commodity(c) for c in commodities_ar]))
 # APP UI
 # ============================================
 st.title("🚚 Freight Pricing Tool")
-rare_lane_status = "✅ Rare Lane Model" if rare_lane_predictor else ""
+model_status = []
+if index_shrink_predictor:
+    model_status.append("✅ Index+Shrinkage")
+if blend_predictor:
+    model_status.append("✅ Blend 0.7")
 dist_status = f"✅ {len(DISTANCE_MATRIX):,} distances" if DISTANCE_MATRIX else ""
-st.caption(f"ML-powered pricing | Domestic | {rare_lane_status} | {dist_status}")
+st.caption(f"ML-powered pricing | Domestic | {' | '.join(model_status)} | {dist_status}")
 
 tab1, tab2 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup"])
 
@@ -941,99 +1158,80 @@ with tab1:
         # Check distance
         if result['Distance_km'] == 0 or result['Distance_Source'] == 'Default':
             st.error(f"⚠️ Distance data missing or estimated for this route ({result['Distance_km']} km)")
-        elif result['Distance_Source'] == 'Matrix':
-            st.caption(f"📏 Distance from hardcoded matrix: {result['Distance_km']:.0f} km")
         
         is_rare_lane = result.get('Is_Rare_Lane', False)
         
-        if is_rare_lane:
-            # RARE LANE UI
-            st.header("⚠️ Rare Lane - Limited Data")
-            st.warning(f"**{lane_en}** has no loads in the last {RECENCY_WINDOW} days. Using model prediction.")
-            
-            st.info(f"🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
-            
-            if rare_lane_predictor and 'RareLane_Price' in result:
-                st.subheader("🔮 Model Prediction (Best Estimate)")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Predicted Price", f"{result['RareLane_Price']:,.0f} SAR")
-                with col2:
-                    st.metric("Price Range", result['RareLane_Range'])
-                with col3:
-                    st.metric("Confidence", result['RareLane_Confidence'])
-                st.caption(f"Method: {result['RareLane_Method']} | CPK: {result['RareLane_CPK']:.3f} SAR/km")
-            
-            if result['Hist_Count'] > 0:
-                st.markdown("---")
-                st.subheader("📊 Historical Data (All Time)")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Loads", result['Hist_Count'])
-                with col2:
-                    st.metric("Min", f"{result['Hist_Min']:,.0f} SAR")
-                with col3:
-                    st.metric("Median", f"{result['Hist_Median']:,.0f} SAR")
-                with col4:
-                    st.metric("Max", f"{result['Hist_Max']:,.0f} SAR")
-            else:
-                st.info("No historical data available for this lane.")
+        # MAIN PRICING DISPLAY
+        st.header("💰 Pricing Results")
+        st.info(f"**{lane_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
         
-        else:
-            # NORMAL LANE UI
-            st.header("🎯 Pricing Corridor")
-            st.info(f"**{lane_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("🟢 ANCHOR", f"{result['Anchor']:,.0f} SAR")
-            with col2:
-                st.metric("🟡 TARGET", f"{result['Target']:,.0f} SAR")
-            with col3:
-                st.metric("🔴 CEILING", f"{result['Ceiling']:,.0f} SAR")
-            
-            st.caption(f"📊 Cost/km: **{result['Cost_Per_KM']:.2f} SAR** | Source: {result['Recommendation_Source']}")
-            
-            if rare_lane_predictor and 'RareLane_Price' in result:
-                with st.expander("🔮 Rare Lane Model (for comparison)", expanded=False):
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Predicted Price", f"{result['RareLane_Price']:,.0f} SAR")
-                    with col2:
-                        st.metric("Price Range", result['RareLane_Range'])
-                    with col3:
-                        st.metric("Confidence", result['RareLane_Confidence'])
-                    st.caption(f"Method: {result['RareLane_Method']} | CPK: {result['RareLane_CPK']:.3f} SAR/km")
-            
-            st.markdown("---")
-            st.subheader(f"📊 Price History")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Historical (All Time)**")
-                if result['Hist_Count'] > 0:
-                    st.dataframe(pd.DataFrame({
-                        'Metric': ['Count', 'Min', 'Median', 'Max'],
-                        'Value': [f"{result['Hist_Count']} loads", f"{result['Hist_Min']:,.0f} SAR",
-                                  f"{result['Hist_Median']:,.0f} SAR", f"{result['Hist_Max']:,.0f} SAR"]
-                    }), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("No historical data")
-            
-            with col2:
-                st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
-                if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
-                    st.dataframe(pd.DataFrame({
-                        'Metric': ['Count', 'Min', 'Median', 'Max'],
-                        'Value': [f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
-                                  f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR",
-                                  f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR",
-                                  f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR"]
-                    }), use_container_width=True, hide_index=True)
-                else:
-                    st.warning(f"No loads in last {RECENCY_WINDOW} days")
-            
-            # AMMUNITION
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("🛒 BUY PRICE", f"{result['Buy_Price']:,} SAR" if result['Buy_Price'] else "N/A")
+        with col2:
+            st.metric("💵 SELL PRICE", f"{result['Sell_Price']:,} SAR" if result['Sell_Price'] else "N/A")
+        with col3:
+            st.metric("📊 Target Margin", result['Target_Margin'])
+        with col4:
+            backhaul_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🔴', 'Unknown': '⚪'}.get(result['Backhaul_Probability'], '⚪')
+            st.metric("🔄 Backhaul Prob", f"{backhaul_emoji} {result['Backhaul_Probability']}")
+        
+        # Model info
+        st.caption(f"📊 Model: **{result['Model_Used']}** | Confidence: **{result['Confidence']}** | CPK: {result['Cost_Per_KM']} SAR/km")
+        
+        if is_rare_lane:
+            st.warning(f"⚠️ **Rare Lane** - No loads in last {RECENCY_WINDOW} days. Using model prediction.")
+        
+        # Historical data
+        st.markdown("---")
+        st.subheader(f"📊 Price History")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Historical (All Time)**")
+            if result['Hist_Count'] > 0:
+                st.dataframe(pd.DataFrame({
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
+                    'Value': [f"{result['Hist_Count']} loads", f"{result['Hist_Min']:,.0f} SAR",
+                              f"{result['Hist_Median']:,.0f} SAR", f"{result['Hist_Max']:,.0f} SAR"]
+                }), use_container_width=True, hide_index=True)
+            else:
+                st.warning("No historical data")
+        
+        with col2:
+            st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
+            if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
+                st.dataframe(pd.DataFrame({
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
+                    'Value': [f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
+                              f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR",
+                              f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR",
+                              f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR"]
+                }), use_container_width=True, hide_index=True)
+            else:
+                st.warning(f"No loads in last {RECENCY_WINDOW} days")
+        
+        # Model Comparison
+        st.markdown("---")
+        with st.expander("🔮 Model Predictions Comparison", expanded=False):
+            model_df = []
+            if 'IndexShrink_Price' in result and result['IndexShrink_Price']:
+                model_df.append({
+                    'Model': result['IndexShrink_Method'],
+                    'Prediction': f"{result['IndexShrink_Price']:,.0f} SAR",
+                    'Upper Bound': f"{result['IndexShrink_Upper']:,.0f} SAR",
+                })
+            if 'Blend_Price' in result and result['Blend_Price']:
+                model_df.append({
+                    'Model': result['Blend_Method'],
+                    'Prediction': f"{result['Blend_Price']:,.0f} SAR",
+                    'Upper Bound': f"{result['Blend_Upper']:,.0f} SAR",
+                })
+            if model_df:
+                st.dataframe(pd.DataFrame(model_df), use_container_width=True, hide_index=True)
+        
+        # AMMUNITION
+        if not is_rare_lane:
             st.markdown("---")
             st.subheader("🚚 Your Ammunition (Recent Matches)")
             
@@ -1068,7 +1266,7 @@ with tab1:
             if total_shown > 0:
                 st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
     
-    # REPORT BUTTON - Outside generate block, uses session state
+    # REPORT BUTTON - Outside generate block
     if 'last_result' in st.session_state and 'last_lane' in st.session_state:
         st.markdown("---")
         with st.expander("🚨 Report Issue with Distance/Data", expanded=False):
@@ -1105,13 +1303,13 @@ with tab2:
     st.markdown(f"""
     **Upload a CSV to get pricing for each route.**
     
-    - **Required:** `From`, `To`
-    - **Optional:** `Vehicle_Type` (default: Flatbed Trailer)
+    **Required:** `From`, `To`  
+    **Optional:** `Vehicle_Type` (default: Flatbed Trailer)
     
     **Output columns:**
-    - Distance, Recommended Price, Recent Count
-    - Model Prediction, Model Lower Bound
-    - Model Chosen (Recency vs Rare Lane), Confidence
+    - Distance, Buy Price (rounded to 100), Sell Price (rounded to 50)
+    - Target Margin, Backhaul Probability
+    - Model Used, Confidence, Recent Count
     """)
     
     sample_df = pd.DataFrame({
@@ -1181,15 +1379,18 @@ with tab2:
                 st.markdown("---")
                 st.subheader("📊 Results")
                 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Routes", len(results_df))
                 with col2:
-                    recency_count = (results_df['Model_Chosen'] == 'Recency').sum()
+                    recency_count = (results_df['Model_Used'] == 'Recency').sum()
                     st.metric("With Recent Data", recency_count)
                 with col3:
-                    rare_count = (results_df['Model_Chosen'] == 'Rare Lane').sum()
-                    st.metric("Rare Lanes", rare_count)
+                    model_count = results_df['Model_Used'].str.contains('Index|Shrink|Blend', na=False).sum()
+                    st.metric("Model Predictions", model_count)
+                with col4:
+                    high_conf = (results_df['Confidence'] == 'High').sum()
+                    st.metric("High Confidence", high_conf)
                 
                 st.dataframe(results_df, use_container_width=True, hide_index=True)
                 
@@ -1224,4 +1425,4 @@ if error_log_csv:
                 clear_error_log()
                 st.rerun()
 
-st.caption("Freight Pricing Tool | Default: Flatbed Trailer | All prices in SAR")
+st.caption("Freight Pricing Tool | Buy Price rounded to 100 | Sell Price rounded to 50 | All prices in SAR")

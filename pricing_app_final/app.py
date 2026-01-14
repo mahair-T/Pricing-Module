@@ -170,7 +170,7 @@ RECENCY_WINDOW = 90  # Days to consider for recency model
 
 # Rental cost index parameters
 RENTAL_COST_PER_DAY = 800  # SAR per day
-RENTAL_KM_PER_DAY = 550    # km that equals one day of rental
+RENTAL_KM_PER_DAY = 600    # km that equals one day of rental
 
 # Error bar percentages by confidence level
 ERROR_BARS = {
@@ -1229,6 +1229,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     
     recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     
+    # Buy price (carrier) stats
     hist_count = len(lane_data) if len(lane_data) > 0 else 0
     hist_min = lane_data['total_carrier_price'].min() if hist_count > 0 else None
     hist_max = lane_data['total_carrier_price'].max() if hist_count > 0 else None
@@ -1238,6 +1239,15 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     recent_min = recent_data['total_carrier_price'].min() if recent_count > 0 else None
     recent_max = recent_data['total_carrier_price'].max() if recent_count > 0 else None
     recent_median = recent_data['total_carrier_price'].median() if recent_count > 0 else None
+    
+    # Sell price (shipper) stats
+    hist_sell_min = lane_data['total_shipper_price'].min() if hist_count > 0 else None
+    hist_sell_max = lane_data['total_shipper_price'].max() if hist_count > 0 else None
+    hist_sell_median = lane_data['total_shipper_price'].median() if hist_count > 0 else None
+    
+    recent_sell_min = recent_data['total_shipper_price'].min() if recent_count > 0 else None
+    recent_sell_max = recent_data['total_shipper_price'].max() if recent_count > 0 else None
+    recent_sell_median = recent_data['total_shipper_price'].median() if recent_count > 0 else None
     
     if commodity is None or commodity in ['', 'Auto', 'auto']:
         commodity = lane_data['commodity'].mode().iloc[0] if len(lane_data) > 0 else df_knn['commodity'].mode().iloc[0]
@@ -1280,6 +1290,13 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         f'Recent_{RECENCY_WINDOW}d_Min': round(recent_min, 0) if recent_min else None,
         f'Recent_{RECENCY_WINDOW}d_Median': round(recent_median, 0) if recent_median else None,
         f'Recent_{RECENCY_WINDOW}d_Max': round(recent_max, 0) if recent_max else None,
+        # Sell price (shipper) stats
+        'Hist_Sell_Min': round(hist_sell_min, 0) if hist_sell_min else None,
+        'Hist_Sell_Median': round(hist_sell_median, 0) if hist_sell_median else None,
+        'Hist_Sell_Max': round(hist_sell_max, 0) if hist_sell_max else None,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Min': round(recent_sell_min, 0) if recent_sell_min else None,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Median': round(recent_sell_median, 0) if recent_sell_median else None,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Max': round(recent_sell_max, 0) if recent_sell_max else None,
         'Buy_Price': pricing['buy_price'],
         'Rec_Sell_Price': pricing['sell_price'],  # Recommended sell (buy + margin)
         'Ref_Sell_Price': pricing['ref_sell_price'],  # Reference sell (market data)
@@ -1397,33 +1414,35 @@ with tab1:
         st.header("💰 Pricing Results")
         st.info(f"**{lane_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
         
-        # Primary pricing row
-        col1, col2, col3 = st.columns(3)
+        # Row 1: Buy Price, Rental Index, Sell Price, Ref. Sell
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("🛒 BUY PRICE", f"{result['Buy_Price']:,} SAR" if result['Buy_Price'] else "N/A")
         with col2:
-            st.metric("💵 REC. SELL", f"{result['Rec_Sell_Price']:,} SAR" if result.get('Rec_Sell_Price') else "N/A",
-                     help="Recommended sell = Buy + Target Margin")
+            rental = result.get('Rental_Cost')
+            st.metric("🚛 Rental Index", f"{rental:,.0f} SAR" if rental else "N/A",
+                     help="Based on 800 SAR/day, 600 km/day")
         with col3:
+            st.metric("💵 SELL PRICE", f"{result['Rec_Sell_Price']:,} SAR" if result.get('Rec_Sell_Price') else "N/A",
+                     help="Recommended sell = Buy + Target Margin")
+        with col4:
             ref_sell = result.get('Ref_Sell_Price')
             ref_src = result.get('Ref_Sell_Source', 'N/A')
             st.metric("📈 REF. SELL", f"{ref_sell:,} SAR" if ref_sell else "N/A",
                      help=f"Reference from market data ({ref_src})")
         
-        # Secondary info row
+        # Row 2: Target Margin, (empty), Confidence, Backhaul Prob
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("📊 Margin", result['Target_Margin'])
+            st.metric("📊 Target Margin", result['Target_Margin'])
         with col2:
-            backhaul_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🔴', 'Unknown': '⚪'}.get(result['Backhaul_Probability'], '⚪')
-            st.metric("🔄 Backhaul", f"{backhaul_emoji} {result['Backhaul_Probability']}")
+            st.empty()  # Empty column
         with col3:
-            rental = result.get('Rental_Cost')
-            st.metric("🚛 Rental Index", f"{rental:,.0f} SAR" if rental else "N/A",
-                     help="Based on 800 SAR/day, 550 km/day")
-        with col4:
             conf_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🟠', 'Very Low': '🔴'}.get(result['Confidence'], '⚪')
             st.metric("📊 Confidence", f"{conf_emoji} {result['Confidence']}")
+        with col4:
+            backhaul_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🔴', 'Unknown': '⚪'}.get(result['Backhaul_Probability'], '⚪')
+            st.metric("🔄 Backhaul", f"{backhaul_emoji} {result['Backhaul_Probability']}")
         
         # Model info
         st.caption(f"📊 Model: **{result['Model_Used']}** | CPK: {result['Cost_Per_KM']} SAR/km | Ref. Sell Source: {result.get('Ref_Sell_Source', 'N/A')}")
@@ -1440,9 +1459,16 @@ with tab1:
             st.markdown("**Historical (All Time)**")
             if result['Hist_Count'] > 0:
                 st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [f"{result['Hist_Count']} loads", f"{result['Hist_Min']:,.0f} SAR",
-                              f"{result['Hist_Median']:,.0f} SAR", f"{result['Hist_Max']:,.0f} SAR"]
+                    'Metric': ['Count', 'Buy Min', 'Buy Median', 'Buy Max', 'Sell Min', 'Sell Median', 'Sell Max'],
+                    'Value': [
+                        f"{result['Hist_Count']} loads",
+                        f"{result['Hist_Min']:,.0f} SAR" if result['Hist_Min'] else "N/A",
+                        f"{result['Hist_Median']:,.0f} SAR" if result['Hist_Median'] else "N/A",
+                        f"{result['Hist_Max']:,.0f} SAR" if result['Hist_Max'] else "N/A",
+                        f"{result['Hist_Sell_Min']:,.0f} SAR" if result.get('Hist_Sell_Min') else "N/A",
+                        f"{result['Hist_Sell_Median']:,.0f} SAR" if result.get('Hist_Sell_Median') else "N/A",
+                        f"{result['Hist_Sell_Max']:,.0f} SAR" if result.get('Hist_Sell_Max') else "N/A",
+                    ]
                 }), use_container_width=True, hide_index=True)
             else:
                 st.warning("No historical data")
@@ -1451,11 +1477,16 @@ with tab1:
             st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
             if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
                 st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
-                              f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR",
-                              f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR",
-                              f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR"]
+                    'Metric': ['Count', 'Buy Min', 'Buy Median', 'Buy Max', 'Sell Min', 'Sell Median', 'Sell Max'],
+                    'Value': [
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "N/A",
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "N/A",
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "N/A",
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Min']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min') else "N/A",
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Median']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median') else "N/A",
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Max']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max') else "N/A",
+                    ]
                 }), use_container_width=True, hide_index=True)
             else:
                 st.warning(f"No loads in last {RECENCY_WINDOW} days")
@@ -1643,7 +1674,7 @@ with tab2:
                 
                 # Column explanations
                 st.caption("""
-                **Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference (source in Ref_Sell_Src) | Rental_Cost = 800 SAR/day × (km ÷ 550)
+                **Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference (source in Ref_Sell_Src) | Rental_Cost = 800 SAR/day × (km ÷ 600)
                 """)
                 
                 st.dataframe(results_df, use_container_width=True, hide_index=True)

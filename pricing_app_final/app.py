@@ -166,7 +166,11 @@ N_SIMILAR = 10
 MIN_DAYS_APART = 5
 MAX_AGE_DAYS = 180
 RECENT_PRIORITY_DAYS = 30
-RECENCY_WINDOW = 90
+RECENCY_WINDOW = 90  # Days to consider for recency model
+
+# Rental cost index parameters
+RENTAL_COST_PER_DAY = 800  # SAR per day
+RENTAL_KM_PER_DAY = 550    # km that equals one day of rental
 
 # Error bar percentages by confidence level
 ERROR_BARS = {

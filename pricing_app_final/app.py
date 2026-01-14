@@ -1414,32 +1414,32 @@ with tab1:
         st.header("💰 Pricing Results")
         st.info(f"**{lane_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
         
-        # Row 1: Buy Price, Rental Index, Sell Price, Ref. Sell
+        # Row 1: Buy Price, Sell Price, Target Margin, Confidence
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("🛒 BUY PRICE", f"{result['Buy_Price']:,} SAR" if result['Buy_Price'] else "N/A")
         with col2:
+            st.metric("💵 SELL PRICE", f"{result['Rec_Sell_Price']:,} SAR" if result.get('Rec_Sell_Price') else "N/A",
+                     help="Recommended sell = Buy + Target Margin")
+        with col3:
+            st.metric("📊 Target Margin", result['Target_Margin'])
+        with col4:
+            conf_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🟠', 'Very Low': '🔴'}.get(result['Confidence'], '⚪')
+            st.metric("📊 Confidence", f"{conf_emoji} {result['Confidence']}")
+        
+        # Row 2: Rental Index, Ref. Sell, (empty), Backhaul Prob
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
             rental = result.get('Rental_Cost')
             st.metric("🚛 Rental Index", f"{rental:,.0f} SAR" if rental else "N/A",
                      help="Based on 800 SAR/day, 600 km/day")
-        with col3:
-            st.metric("💵 SELL PRICE", f"{result['Rec_Sell_Price']:,} SAR" if result.get('Rec_Sell_Price') else "N/A",
-                     help="Recommended sell = Buy + Target Margin")
-        with col4:
+        with col2:
             ref_sell = result.get('Ref_Sell_Price')
             ref_src = result.get('Ref_Sell_Source', 'N/A')
             st.metric("📈 REF. SELL", f"{ref_sell:,} SAR" if ref_sell else "N/A",
                      help=f"Reference from market data ({ref_src})")
-        
-        # Row 2: Target Margin, (empty), Confidence, Backhaul Prob
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("📊 Target Margin", result['Target_Margin'])
-        with col2:
-            st.empty()  # Empty column
         with col3:
-            conf_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🟠', 'Very Low': '🔴'}.get(result['Confidence'], '⚪')
-            st.metric("📊 Confidence", f"{conf_emoji} {result['Confidence']}")
+            st.empty()  # Empty column
         with col4:
             backhaul_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🔴', 'Unknown': '⚪'}.get(result['Backhaul_Probability'], '⚪')
             st.metric("🔄 Backhaul", f"{backhaul_emoji} {result['Backhaul_Probability']}")
@@ -1454,42 +1454,63 @@ with tab1:
         st.markdown("---")
         st.subheader(f"📊 Price History")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Historical (All Time)**")
-            if result['Hist_Count'] > 0:
+        # Historical section
+        st.markdown("**Historical (All Time)**")
+        if result['Hist_Count'] > 0:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("*Buy Price (Carrier)*")
                 st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Buy Min', 'Buy Median', 'Buy Max', 'Sell Min', 'Sell Median', 'Sell Max'],
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
                     'Value': [
                         f"{result['Hist_Count']} loads",
                         f"{result['Hist_Min']:,.0f} SAR" if result['Hist_Min'] else "N/A",
                         f"{result['Hist_Median']:,.0f} SAR" if result['Hist_Median'] else "N/A",
                         f"{result['Hist_Max']:,.0f} SAR" if result['Hist_Max'] else "N/A",
-                        f"{result['Hist_Sell_Min']:,.0f} SAR" if result.get('Hist_Sell_Min') else "N/A",
-                        f"{result['Hist_Sell_Median']:,.0f} SAR" if result.get('Hist_Sell_Median') else "N/A",
-                        f"{result['Hist_Sell_Max']:,.0f} SAR" if result.get('Hist_Sell_Max') else "N/A",
                     ]
                 }), use_container_width=True, hide_index=True)
-            else:
-                st.warning("No historical data")
-        
-        with col2:
-            st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
-            if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
+            with col2:
+                st.markdown("*Sell Price (Shipper)*")
                 st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Buy Min', 'Buy Median', 'Buy Max', 'Sell Min', 'Sell Median', 'Sell Max'],
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
+                    'Value': [
+                        f"{result['Hist_Count']} loads",
+                        f"{result.get('Hist_Sell_Min'):,.0f} SAR" if result.get('Hist_Sell_Min') else "N/A",
+                        f"{result.get('Hist_Sell_Median'):,.0f} SAR" if result.get('Hist_Sell_Median') else "N/A",
+                        f"{result.get('Hist_Sell_Max'):,.0f} SAR" if result.get('Hist_Sell_Max') else "N/A",
+                    ]
+                }), use_container_width=True, hide_index=True)
+        else:
+            st.warning("No historical data")
+        
+        # Recent section
+        st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
+        if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("*Buy Price (Carrier)*")
+                st.dataframe(pd.DataFrame({
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
                     'Value': [
                         f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "N/A",
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "N/A",
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "N/A",
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Min']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min') else "N/A",
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Median']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median') else "N/A",
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Max']:,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max') else "N/A",
+                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Min'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "N/A",
+                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Median'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "N/A",
+                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Max'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "N/A",
                     ]
                 }), use_container_width=True, hide_index=True)
-            else:
-                st.warning(f"No loads in last {RECENCY_WINDOW} days")
+            with col2:
+                st.markdown("*Sell Price (Shipper)*")
+                st.dataframe(pd.DataFrame({
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
+                    'Value': [
+                        f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
+                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min') else "N/A",
+                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median') else "N/A",
+                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max') else "N/A",
+                    ]
+                }), use_container_width=True, hide_index=True)
+        else:
+            st.warning(f"No loads in last {RECENCY_WINDOW} days")
         
         # Model Comparison
         st.markdown("---")

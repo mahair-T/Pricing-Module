@@ -188,14 +188,19 @@ def load_city_normalization():
         # Build lookup dicts
         variant_to_canonical = {}
         variant_to_region = {}
+        canonical_to_region = {}
+        
         for _, row in df.iterrows():
             variant_to_canonical[row['variant']] = row['canonical']
             if pd.notna(row.get('region')):
                 variant_to_region[row['variant']] = row['region']
-        return variant_to_canonical, variant_to_region
-    return {}, {}
+                # Also map canonical → region (canonical maps to itself)
+                canonical_to_region[row['canonical']] = row['region']
+        
+        return variant_to_canonical, variant_to_region, canonical_to_region
+    return {}, {}, {}
 
-CITY_TO_CANONICAL, CITY_TO_REGION = load_city_normalization()
+CITY_TO_CANONICAL, CITY_TO_REGION, CANONICAL_TO_REGION = load_city_normalization()
 
 # ============================================
 # CITY NORMALIZATION - Comprehensive
@@ -384,9 +389,17 @@ def normalize_city(city_raw):
     return city, False
 
 def get_city_region(city):
-    """Get region for a city."""
+    """Get region for a city (checks both variant and canonical mappings)."""
+    # First try variant mapping
     if city in CITY_TO_REGION:
         return CITY_TO_REGION[city]
+    # Then try canonical mapping
+    if city in CANONICAL_TO_REGION:
+        return CANONICAL_TO_REGION[city]
+    # Try normalizing first then looking up
+    canonical = CITY_TO_CANONICAL.get(city, city)
+    if canonical in CANONICAL_TO_REGION:
+        return CANONICAL_TO_REGION[canonical]
     return None
 
 def to_english_city(city_ar):
@@ -493,10 +506,20 @@ class IndexShrinkagePredictor:
         return None
     
     def _predict_shrinkage(self, lane, pickup_city, dest_city):
-        p_prior = self.pickup_priors.get(pickup_city, self.global_mean)
-        d_prior = self.dest_priors.get(dest_city, self.global_mean)
+        # Try to get priors with canonical names as fallback
+        p_prior = self.pickup_priors.get(pickup_city)
+        if p_prior is None:
+            pickup_canonical = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
+            p_prior = self.pickup_priors.get(pickup_canonical, self.global_mean)
+        
+        d_prior = self.dest_priors.get(dest_city)
+        if d_prior is None:
+            dest_canonical = CITY_TO_CANONICAL.get(dest_city, dest_city)
+            d_prior = self.dest_priors.get(dest_canonical, self.global_mean)
+        
         city_prior = (p_prior + d_prior) / 2
         
+        # Try lane stats with canonical lane as fallback
         if lane in self.lane_stats:
             stats = self.lane_stats[lane]
             lane_mean = stats['lane_mean']
@@ -504,17 +527,55 @@ class IndexShrinkagePredictor:
             lam = lane_n / (lane_n + self.k)
             return lam * lane_mean + (1 - lam) * city_prior
         else:
+            # Try canonical lane
+            canonical_lane = self.get_canonical_lane(lane)
+            if canonical_lane in self.lane_stats:
+                stats = self.lane_stats[canonical_lane]
+                lane_mean = stats['lane_mean']
+                lane_n = stats['lane_n']
+                lam = lane_n / (lane_n + self.k)
+                return lam * lane_mean + (1 - lam) * city_prior
             return city_prior
     
     def has_lane_data(self, lane):
-        """Check if we have data for this lane."""
-        return lane in self.lane_stats or lane in self.lane_multipliers
+        """Check if we have data for this lane (tries canonical names too)."""
+        if lane in self.lane_stats or lane in self.lane_multipliers:
+            return True
+        
+        # Try with canonical names
+        parts = lane.split(' → ')
+        if len(parts) == 2:
+            pickup, dest = parts
+            pickup_canonical = CITY_TO_CANONICAL.get(pickup, pickup)
+            dest_canonical = CITY_TO_CANONICAL.get(dest, dest)
+            canonical_lane = f"{pickup_canonical} → {dest_canonical}"
+            if canonical_lane != lane:
+                return canonical_lane in self.lane_stats or canonical_lane in self.lane_multipliers
+        return False
+    
+    def get_canonical_lane(self, lane):
+        """Get the canonical version of a lane string."""
+        parts = lane.split(' → ')
+        if len(parts) == 2:
+            pickup, dest = parts
+            pickup_canonical = CITY_TO_CANONICAL.get(pickup, pickup)
+            dest_canonical = CITY_TO_CANONICAL.get(dest, dest)
+            return f"{pickup_canonical} → {dest_canonical}"
+        return lane
     
     def predict(self, pickup_city, dest_city, distance_km=None):
         lane = f"{pickup_city} → {dest_city}"
         
-        idx_pred = self._predict_index(lane)
-        shrink_pred = self._predict_shrinkage(lane, pickup_city, dest_city)
+        # Try canonical lane if original doesn't exist
+        canonical_lane = self.get_canonical_lane(lane)
+        lookup_lane = canonical_lane if (canonical_lane in self.lane_stats or canonical_lane in self.lane_multipliers) else lane
+        
+        # Also get canonical city names for priors
+        pickup_canonical = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
+        dest_canonical = CITY_TO_CANONICAL.get(dest_city, dest_city)
+        
+        idx_pred = self._predict_index(lookup_lane)
+        shrink_pred = self._predict_shrinkage(lookup_lane, pickup_canonical, dest_canonical)
         
         if idx_pred is not None and shrink_pred is not None:
             predicted_cpk = (idx_pred + shrink_pred) / 2
@@ -570,9 +631,18 @@ class BlendPredictor:
         self.model_date = self.config.get('training_date', 'Unknown')
     
     def predict(self, pickup_city, dest_city, distance_km=None):
-        # Get regions
-        p_region = self.city_to_region.get(pickup_city)
-        d_region = self.city_to_region.get(dest_city)
+        # Get regions - use CSV-based CANONICAL_TO_REGION as source of truth
+        # First try the global mapping, fall back to model's mapping
+        p_region = CANONICAL_TO_REGION.get(pickup_city) or self.city_to_region.get(pickup_city)
+        d_region = CANONICAL_TO_REGION.get(dest_city) or self.city_to_region.get(dest_city)
+        
+        # If still no region, try normalizing the city name first
+        if not p_region:
+            pickup_canonical = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
+            p_region = CANONICAL_TO_REGION.get(pickup_canonical)
+        if not d_region:
+            dest_canonical = CITY_TO_CANONICAL.get(dest_city, dest_city)
+            d_region = CANONICAL_TO_REGION.get(dest_canonical)
         
         # Get regional CPK
         regional_cpk = None
@@ -758,13 +828,17 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     1. Historical distance from lane data (if provided and has data)
     2. Reverse lane historical distance
     3. DISTANCE_LOOKUP from config
-    4. Hardcoded distance matrix
+    4. Hardcoded distance matrix (with canonical name fallback)
     5. Reverse in distance matrix
     
     Returns (distance, source)
     """
     lane = f"{pickup_ar} → {dest_ar}"
     reverse_lane = f"{dest_ar} → {pickup_ar}"
+    
+    # Normalize to canonical names for distance matrix lookup
+    pickup_canonical = CITY_TO_CANONICAL.get(pickup_ar, pickup_ar)
+    dest_canonical = CITY_TO_CANONICAL.get(dest_ar, dest_ar)
     
     # 1. Try historical distance from lane data
     if lane_data is not None and len(lane_data) > 0:
@@ -779,7 +853,7 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
         if len(dist_vals) > 0:
             return dist_vals.median(), 'Historical (reverse)'
     
-    # 3. Try DISTANCE_LOOKUP from config
+    # 3. Try DISTANCE_LOOKUP from config (uses lane strings)
     dist = DISTANCE_LOOKUP.get(lane)
     if dist and dist > 0:
         return dist, 'Historical'
@@ -789,20 +863,34 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     if dist and dist > 0:
         return dist, 'Historical (reverse)'
     
-    # 5. Try hardcoded distance matrix
+    # 5. Try distance matrix with original names
     dist = DISTANCE_MATRIX.get((pickup_ar, dest_ar))
     if dist and dist > 0:
         return dist, 'Matrix'
     
-    # 6. Try reverse in distance matrix
+    # 6. Try distance matrix with canonical names (key fix for bulk upload)
+    if pickup_canonical != pickup_ar or dest_canonical != dest_ar:
+        dist = DISTANCE_MATRIX.get((pickup_canonical, dest_canonical))
+        if dist and dist > 0:
+            return dist, 'Matrix (canonical)'
+    
+    # 7. Try reverse in distance matrix
     dist = DISTANCE_MATRIX.get((dest_ar, pickup_ar))
     if dist and dist > 0:
         return dist, 'Matrix (reverse)'
+    
+    # 8. Try reverse with canonical names
+    if pickup_canonical != pickup_ar or dest_canonical != dest_ar:
+        dist = DISTANCE_MATRIX.get((dest_canonical, pickup_canonical))
+        if dist and dist > 0:
+            return dist, 'Matrix (canonical reverse)'
     
     # Log missing distance
     log_exception('missing_distance', {
         'pickup_city': pickup_ar,
         'destination_city': dest_ar,
+        'pickup_canonical': pickup_canonical,
+        'destination_canonical': dest_canonical,
         'pickup_en': to_english_city(pickup_ar),
         'destination_en': to_english_city(dest_ar),
     })

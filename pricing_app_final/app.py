@@ -868,12 +868,20 @@ def get_backhaul_probability(dest_city):
 # ============================================
 def calculate_rental_cost(distance_km):
     """Calculate rental cost index based on distance.
-    Assumes 800 SAR/day and 550km = 1 day of rental.
+    Assumes 800 SAR/day and 600km = 1 day of rental.
+    Rounding: <1 day rounds to 1 day, >1 day rounds to nearest 0.5 day.
     """
     if not distance_km or distance_km <= 0:
         return None
     days = distance_km / RENTAL_KM_PER_DAY
-    return round(days * RENTAL_COST_PER_DAY, 0)
+    
+    # Round: less than 1 day → 1 day, otherwise round to nearest 0.5 day
+    if days < 1:
+        days_rounded = 1.0
+    else:
+        days_rounded = round(days * 2) / 2  # Round to nearest 0.5
+    
+    return round(days_rounded * RENTAL_COST_PER_DAY, 0)
 
 def calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, recommended_sell):
     """
@@ -1432,7 +1440,7 @@ with tab1:
         with col1:
             rental = result.get('Rental_Cost')
             st.metric("🚛 Rental Index", f"{rental:,.0f} SAR" if rental else "N/A",
-                     help="Based on 800 SAR/day, 600 km/day")
+                     help="800 SAR/day, 600 km/day. <1 day → 1 day, >1 day → nearest 0.5 day")
         with col2:
             ref_sell = result.get('Ref_Sell_Price')
             ref_src = result.get('Ref_Sell_Source', 'N/A')
@@ -1454,63 +1462,46 @@ with tab1:
         st.markdown("---")
         st.subheader(f"📊 Price History")
         
-        # Historical section
-        st.markdown("**Historical (All Time)**")
-        if result['Hist_Count'] > 0:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("*Buy Price (Carrier)*")
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [
-                        f"{result['Hist_Count']} loads",
-                        f"{result['Hist_Min']:,.0f} SAR" if result['Hist_Min'] else "N/A",
-                        f"{result['Hist_Median']:,.0f} SAR" if result['Hist_Median'] else "N/A",
-                        f"{result['Hist_Max']:,.0f} SAR" if result['Hist_Max'] else "N/A",
-                    ]
-                }), use_container_width=True, hide_index=True)
-            with col2:
-                st.markdown("*Sell Price (Shipper)*")
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [
-                        f"{result['Hist_Count']} loads",
-                        f"{result.get('Hist_Sell_Min'):,.0f} SAR" if result.get('Hist_Sell_Min') else "N/A",
-                        f"{result.get('Hist_Sell_Median'):,.0f} SAR" if result.get('Hist_Sell_Median') else "N/A",
-                        f"{result.get('Hist_Sell_Max'):,.0f} SAR" if result.get('Hist_Sell_Max') else "N/A",
-                    ]
-                }), use_container_width=True, hide_index=True)
-        else:
-            st.warning("No historical data")
+        # Combined price history table
+        hist_count = result['Hist_Count']
+        recent_count = result[f'Recent_{RECENCY_WINDOW}d_Count']
         
-        # Recent section
-        st.markdown(f"**Recent ({RECENCY_WINDOW} Days)**")
-        if result[f'Recent_{RECENCY_WINDOW}d_Count'] > 0:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("*Buy Price (Carrier)*")
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
-                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Min'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "N/A",
-                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Median'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "N/A",
-                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Max'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "N/A",
-                    ]
-                }), use_container_width=True, hide_index=True)
-            with col2:
-                st.markdown("*Sell Price (Shipper)*")
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Value': [
-                        f"{result[f'Recent_{RECENCY_WINDOW}d_Count']} loads",
-                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min') else "N/A",
-                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median') else "N/A",
-                        f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max'):,.0f} SAR" if result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max') else "N/A",
-                    ]
-                }), use_container_width=True, hide_index=True)
+        if hist_count > 0 or recent_count > 0:
+            price_history_data = {
+                'Metric': [
+                    f'Historical Count',
+                    f'Historical Min',
+                    f'Historical Median',
+                    f'Historical Max',
+                    f'Recent ({RECENCY_WINDOW}d) Count',
+                    f'Recent ({RECENCY_WINDOW}d) Min',
+                    f'Recent ({RECENCY_WINDOW}d) Median',
+                    f'Recent ({RECENCY_WINDOW}d) Max',
+                ],
+                'Buy Price': [
+                    f"{hist_count} loads" if hist_count > 0 else "—",
+                    f"{result['Hist_Min']:,.0f} SAR" if hist_count > 0 and result['Hist_Min'] else "—",
+                    f"{result['Hist_Median']:,.0f} SAR" if hist_count > 0 and result['Hist_Median'] else "—",
+                    f"{result['Hist_Max']:,.0f} SAR" if hist_count > 0 and result['Hist_Max'] else "—",
+                    f"{recent_count} loads" if recent_count > 0 else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Min'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Median'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Max'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "—",
+                ],
+                'Sell Price': [
+                    f"{hist_count} loads" if hist_count > 0 else "—",
+                    f"{result.get('Hist_Sell_Min'):,.0f} SAR" if hist_count > 0 and result.get('Hist_Sell_Min') else "—",
+                    f"{result.get('Hist_Sell_Median'):,.0f} SAR" if hist_count > 0 and result.get('Hist_Sell_Median') else "—",
+                    f"{result.get('Hist_Sell_Max'):,.0f} SAR" if hist_count > 0 and result.get('Hist_Sell_Max') else "—",
+                    f"{recent_count} loads" if recent_count > 0 else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min') else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median') else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max') else "—",
+                ]
+            }
+            st.dataframe(pd.DataFrame(price_history_data), use_container_width=True, hide_index=True)
         else:
-            st.warning(f"No loads in last {RECENCY_WINDOW} days")
+            st.warning("No historical or recent data available")
         
         # Model Comparison
         st.markdown("---")
@@ -1695,7 +1686,7 @@ with tab2:
                 
                 # Column explanations
                 st.caption("""
-                **Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference (source in Ref_Sell_Src) | Rental_Cost = 800 SAR/day × (km ÷ 600)
+                **Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference | Rental_Cost = 800 SAR/day × days (rounded)
                 """)
                 
                 st.dataframe(results_df, use_container_width=True, hide_index=True)

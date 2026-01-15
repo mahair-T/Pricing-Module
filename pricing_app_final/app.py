@@ -1467,42 +1467,55 @@ with tab1:
         recent_count = result[f'Recent_{RECENCY_WINDOW}d_Count']
         
         if hist_count > 0 or recent_count > 0:
-            price_history_data = {
-                'Metric': [
-                    f'Historical Count',
-                    f'Historical Min',
-                    f'Historical Median',
-                    f'Historical Max',
-                    f'Recent ({RECENCY_WINDOW}d) Count',
-                    f'Recent ({RECENCY_WINDOW}d) Min',
-                    f'Recent ({RECENCY_WINDOW}d) Median',
-                    f'Recent ({RECENCY_WINDOW}d) Max',
-                ],
+            # Create two columns for side-by-side layout
+            col1, col2 = st.columns(2)
+            
+            # --- Historical Data Table ---
+            hist_data = {
+                'Metric': ['Count', 'Min', 'Median', 'Max'],
                 'Buy Price': [
                     f"{hist_count} loads" if hist_count > 0 else "—",
                     f"{result['Hist_Min']:,.0f} SAR" if hist_count > 0 and result['Hist_Min'] else "—",
                     f"{result['Hist_Median']:,.0f} SAR" if hist_count > 0 and result['Hist_Median'] else "—",
                     f"{result['Hist_Max']:,.0f} SAR" if hist_count > 0 and result['Hist_Max'] else "—",
-                    f"{recent_count} loads" if recent_count > 0 else "—",
-                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Min'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "—",
-                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Median'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "—",
-                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Max'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "—",
                 ],
                 'Sell Price': [
                     f"{hist_count} loads" if hist_count > 0 else "—",
                     f"{result.get('Hist_Sell_Min'):,.0f} SAR" if hist_count > 0 and result.get('Hist_Sell_Min') else "—",
                     f"{result.get('Hist_Sell_Median'):,.0f} SAR" if hist_count > 0 and result.get('Hist_Sell_Median') else "—",
                     f"{result.get('Hist_Sell_Max'):,.0f} SAR" if hist_count > 0 and result.get('Hist_Sell_Max') else "—",
+                ]
+            }
+
+            # --- Recent Data Table ---
+            recent_data = {
+                'Metric': ['Count', 'Min', 'Median', 'Max'],
+                'Buy Price': [
+                    f"{recent_count} loads" if recent_count > 0 else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Min'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Min') else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Median'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Median') else "—",
+                    f"{result.get(f'Recent_{RECENCY_WINDOW}d_Max'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Max') else "—",
+                ],
+                'Sell Price': [
                     f"{recent_count} loads" if recent_count > 0 else "—",
                     f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Min') else "—",
                     f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Median') else "—",
                     f"{result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max'):,.0f} SAR" if recent_count > 0 and result.get(f'Recent_{RECENCY_WINDOW}d_Sell_Max') else "—",
                 ]
             }
-            st.dataframe(pd.DataFrame(price_history_data), use_container_width=True, hide_index=True)
+
+            # Render the tables side by side
+            with col1:
+                st.markdown("### Historical")
+                st.dataframe(pd.DataFrame(hist_data), use_container_width=True, hide_index=True)
+            
+            with col2:
+                st.markdown(f"### Recent ({RECENCY_WINDOW}d)")
+                st.dataframe(pd.DataFrame(recent_data), use_container_width=True, hide_index=True)
+
         else:
             st.warning("No historical or recent data available")
-        
+            
         # Model Comparison
         st.markdown("---")
         with st.expander("🔮 Model Predictions Comparison", expanded=False):

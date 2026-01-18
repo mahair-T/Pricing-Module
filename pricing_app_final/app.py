@@ -1337,9 +1337,9 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
 # ============================================
 # BUILD DROPDOWN OPTIONS
 # ============================================
-pickup_cities_ar = sorted(df_knn['pickup_city'].unique())
+pickup_cities_ar = sorted(city_norm_df['canonical'].dropna().unique())
 pickup_cities_en = sorted(set([to_english_city(c) for c in pickup_cities_ar]))
-dest_cities_ar = sorted(df_knn['destination_city'].unique())
+dest_cities_ar = sorted(city_norm_df['canonical'].dropna().unique())
 dest_cities_en = sorted(set([to_english_city(c) for c in dest_cities_ar]))
 vehicle_types_ar = df_knn['vehicle_type'].unique()
 vehicle_types_en = sorted(set([to_english_vehicle(v) for v in vehicle_types_ar]))

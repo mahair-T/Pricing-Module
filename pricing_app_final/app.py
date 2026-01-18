@@ -35,8 +35,7 @@ def load_city_normalization():
     2. Canonical (Arabic) -> English Display Name mapping.
     3. Region mappings.
     """
-    # Updated filename as per request
-    norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_with_regions.csv')
+    norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_updated.csv')
     
     variant_to_canonical = {}
     variant_to_canonical_lower = {}
@@ -1096,6 +1095,25 @@ with tab1:
                 }), use_container_width=True, hide_index=True)
         else:
             st.warning("No historical or recent data available")
+        
+        # Model Comparison (Restored)
+        st.markdown("---")
+        with st.expander("🔮 Model Predictions Comparison", expanded=False):
+            model_df = []
+            if 'IndexShrink_Price' in result and result['IndexShrink_Price']:
+                model_df.append({
+                    'Model': result['IndexShrink_Method'],
+                    'Prediction': f"{result['IndexShrink_Price']:,.0f} SAR",
+                    'Upper Bound': f"{result['IndexShrink_Upper']:,.0f} SAR",
+                })
+            if 'Blend_Price' in result and result['Blend_Price']:
+                model_df.append({
+                    'Model': result['Blend_Method'],
+                    'Prediction': f"{result['Blend_Price']:,.0f} SAR",
+                    'Upper Bound': f"{result['Blend_Upper']:,.0f} SAR",
+                })
+            if model_df:
+                st.dataframe(pd.DataFrame(model_df), use_container_width=True, hide_index=True)
             
         # Ammunition
         if not result['Is_Rare_Lane']:

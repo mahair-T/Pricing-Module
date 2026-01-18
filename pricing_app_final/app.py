@@ -6,6 +6,7 @@ import pickle
 import os
 import io
 import re
+from datetime import datetime
 
 # ============================================
 # PAGE CONFIG
@@ -99,7 +100,6 @@ def load_city_normalization():
 CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN = load_city_normalization()
 
 # Create Reverse Mapping (English Display -> Arabic Canonical)
-# This is crucial for the Dropdown -> Backend logic
 CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 
 # ============================================
@@ -132,33 +132,24 @@ def get_city_region(city):
     canonical = CITY_TO_CANONICAL.get(city, city)
     if canonical in CANONICAL_TO_REGION:
         return CANONICAL_TO_REGION[canonical]
-    
     # Try variant mapping
     if city in CITY_TO_REGION:
         return CITY_TO_REGION[city]
-        
     return None
 
 def to_english_city(city_ar):
     """Convert Canonical Arabic -> English Display Name."""
-    # If it's already in our English map, return it
     if city_ar in CITY_AR_TO_EN:
         return CITY_AR_TO_EN[city_ar]
-    
-    # Try normalizing first
     norm, found = normalize_city(city_ar)
     if found and norm in CITY_AR_TO_EN:
         return CITY_AR_TO_EN[norm]
-        
     return city_ar
 
 def to_arabic_city(city_en):
     """Convert English Display Name -> Canonical Arabic."""
-    # Direct lookup from our generated English map
     if city_en in CITY_EN_TO_AR:
         return CITY_EN_TO_AR[city_en]
-        
-    # Try normalizing standard logic
     norm, found = normalize_city(city_en)
     return norm if norm else city_en
 
@@ -238,8 +229,6 @@ def get_reported_sheet():
 
 def log_exception(exception_type, details):
     """Log exception to Google Sheets."""
-    from datetime import datetime
-    
     if 'error_log' not in st.session_state:
         st.session_state.error_log = []
     
@@ -268,8 +257,6 @@ def log_exception(exception_type, details):
 
 def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distance, issue_type, user_notes=''):
     """Report a distance issue to the Reported sheet."""
-    from datetime import datetime
-    
     try:
         worksheet = get_reported_sheet()
         if worksheet:
@@ -413,7 +400,6 @@ class IndexShrinkagePredictor:
     def _predict_shrinkage(self, lane, pickup_city, dest_city):
         p_prior = self.pickup_priors.get(pickup_city)
         if p_prior is None:
-            # Fallback to normalized name
             pickup_canonical = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
             p_prior = self.pickup_priors.get(pickup_canonical, self.global_mean)
         
@@ -424,21 +410,21 @@ class IndexShrinkagePredictor:
         
         city_prior = (p_prior + d_prior) / 2
         
-        # Check lane stats
         if lane in self.lane_stats:
             stats = self.lane_stats[lane]
-        else:
-            # Try canonical lane
-            canonical_lane = self.get_canonical_lane(lane)
-            stats = self.lane_stats.get(canonical_lane)
-            
-        if stats:
             lane_mean = stats['lane_mean']
             lane_n = stats['lane_n']
             lam = lane_n / (lane_n + self.k)
             return lam * lane_mean + (1 - lam) * city_prior
-        
-        return city_prior
+        else:
+            canonical_lane = self.get_canonical_lane(lane)
+            if canonical_lane in self.lane_stats:
+                stats = self.lane_stats[canonical_lane]
+                lane_mean = stats['lane_mean']
+                lane_n = stats['lane_n']
+                lam = lane_n / (lane_n + self.k)
+                return lam * lane_mean + (1 - lam) * city_prior
+            return city_prior
     
     def has_lane_data(self, lane):
         if lane in self.lane_stats or lane in self.lane_multipliers:
@@ -457,12 +443,9 @@ class IndexShrinkagePredictor:
     
     def predict(self, pickup_city, dest_city, distance_km=None):
         lane = f"{pickup_city} → {dest_city}"
-        
-        # Try canonical lane if original doesn't exist
         canonical_lane = self.get_canonical_lane(lane)
         lookup_lane = canonical_lane if (canonical_lane in self.lane_stats or canonical_lane in self.lane_multipliers) else lane
         
-        # Also get canonical city names for priors
         pickup_canonical = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
         dest_canonical = CITY_TO_CANONICAL.get(dest_city, dest_city)
         
@@ -523,11 +506,9 @@ class BlendPredictor:
         self.model_date = self.config.get('training_date', 'Unknown')
     
     def predict(self, pickup_city, dest_city, distance_km=None):
-        # Get regions - Use global mappings first
         p_region = CANONICAL_TO_REGION.get(pickup_city) or self.city_to_region.get(pickup_city)
         d_region = CANONICAL_TO_REGION.get(dest_city) or self.city_to_region.get(dest_city)
         
-        # Fallback normalization
         if not p_region:
             p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
             p_region = CANONICAL_TO_REGION.get(p_can)
@@ -535,12 +516,10 @@ class BlendPredictor:
             d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
             d_region = CANONICAL_TO_REGION.get(d_can)
         
-        # Get regional CPK
         regional_cpk = None
         if p_region and d_region:
             regional_cpk = self.regional_cpk.get((p_region, d_region))
         
-        # Get city multipliers
         p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
         d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
         
@@ -548,7 +527,6 @@ class BlendPredictor:
         d_mult = self.dest_city_mult.get(dest_city, self.dest_city_mult.get(d_can, 1.0))
         city_cpk = p_mult * d_mult * self.current_index
         
-        # Blend
         if regional_cpk is not None:
             predicted_cpk = self.regional_weight * regional_cpk + (1 - self.regional_weight) * city_cpk
             method = f'Blend ({self.regional_weight:.0%} Regional)'
@@ -888,75 +866,106 @@ def get_ammunition_loads(lane, vehicle_ar, commodity=None):
     return select_spaced_samples(same, 5), select_spaced_samples(other, 5)
 
 def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weight=None):
-    if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
-    lane = f"{pickup_ar} → {dest_ar}"
+    if vehicle_ar is None or vehicle_ar in ['', 'Auto', 'auto', None]:
+        vehicle_ar = DEFAULT_VEHICLE_AR
     
+    lane = f"{pickup_ar} → {dest_ar}"
     lane_data = df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == vehicle_ar)].copy()
+    
     if commodity and commodity not in ['', 'Auto', 'auto', None]:
-        if len(lane_data[lane_data['commodity'] == commodity]) > 0:
-            lane_data = lane_data[lane_data['commodity'] == commodity]
+        lane_commodity_data = lane_data[lane_data['commodity'] == commodity]
+        if len(lane_commodity_data) > 0:
+            lane_data = lane_commodity_data
     
     recent_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     
-    # Stats logic (condensed)
-    def get_stats(data, col):
-        if len(data) == 0: return None, None, None, 0
-        return round(data[col].min(),0), round(data[col].median(),0), round(data[col].max(),0), len(data)
-
-    h_min, h_med, h_max, h_count = get_stats(lane_data, 'total_carrier_price')
-    r_min, r_med, r_max, r_count = get_stats(recent_data, 'total_carrier_price')
-    hs_min, hs_med, hs_max, _ = get_stats(lane_data, 'total_shipper_price')
-    rs_min, rs_med, rs_max, _ = get_stats(recent_data, 'total_shipper_price')
+    # Buy price (carrier) stats
+    hist_count = len(lane_data) if len(lane_data) > 0 else 0
+    hist_min = lane_data['total_carrier_price'].min() if hist_count > 0 else None
+    hist_max = lane_data['total_carrier_price'].max() if hist_count > 0 else None
+    hist_median = lane_data['total_carrier_price'].median() if hist_count > 0 else None
     
-    if not commodity or commodity in ['', 'Auto']:
+    recent_count = len(recent_data) if len(recent_data) > 0 else 0
+    recent_min = recent_data['total_carrier_price'].min() if recent_count > 0 else None
+    recent_max = recent_data['total_carrier_price'].max() if recent_count > 0 else None
+    recent_median = recent_data['total_carrier_price'].median() if recent_count > 0 else None
+    
+    # Sell price (shipper) stats
+    hist_sell_min = lane_data['total_shipper_price'].min() if hist_count > 0 else None
+    hist_sell_max = lane_data['total_shipper_price'].max() if hist_count > 0 else None
+    hist_sell_median = lane_data['total_shipper_price'].median() if hist_count > 0 else None
+    
+    recent_sell_min = recent_data['total_shipper_price'].min() if recent_count > 0 else None
+    recent_sell_max = recent_data['total_shipper_price'].max() if recent_count > 0 else None
+    recent_sell_median = recent_data['total_shipper_price'].median() if recent_count > 0 else None
+    
+    if commodity is None or commodity in ['', 'Auto', 'auto']:
         commodity = lane_data['commodity'].mode().iloc[0] if len(lane_data) > 0 else df_knn['commodity'].mode().iloc[0]
     
-    if not weight:
-        w_data = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
-        weight = w_data.median() if len(w_data) > 0 else df_knn['weight'].median()
-        
-    distance, dist_source = get_distance(pickup_ar, dest_ar, lane_data)
-    if distance == 0: distance, dist_source = 500, 'Default'
+    if weight is None or weight == 0:
+        comm_weights = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
+        weight = comm_weights.median() if len(comm_weights) > 0 else df_knn['weight'].median()
     
+    # Get distance
+    distance, distance_source = get_distance(pickup_ar, dest_ar, lane_data)
+    if distance == 0:
+        distance = 500
+        distance_source = 'Default'
+    
+    # Calculate prices using cascade
     pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance, lane_data)
+    
+    # Determine if rare lane
+    is_rare_lane = recent_count == 0
     
     result = {
         'Vehicle_Type': to_english_vehicle(vehicle_ar),
         'Commodity': to_english_commodity(commodity),
         'Weight_Tons': round(weight, 1),
         'Distance_km': round(distance, 0),
-        'Distance_Source': dist_source,
-        'Hist_Count': h_count, 'Hist_Min': h_min, 'Hist_Median': h_med, 'Hist_Max': h_max,
-        f'Recent_{RECENCY_WINDOW}d_Count': r_count, 
-        f'Recent_{RECENCY_WINDOW}d_Min': r_min, f'Recent_{RECENCY_WINDOW}d_Median': r_med, f'Recent_{RECENCY_WINDOW}d_Max': r_max,
-        'Hist_Sell_Min': hs_min, 'Hist_Sell_Median': hs_med, 'Hist_Sell_Max': hs_max,
-        f'Recent_{RECENCY_WINDOW}d_Sell_Min': rs_min, f'Recent_{RECENCY_WINDOW}d_Sell_Median': rs_med, f'Recent_{RECENCY_WINDOW}d_Sell_Max': rs_max,
+        'Distance_Source': distance_source,
+        'Hist_Count': hist_count,
+        'Hist_Min': round(hist_min, 0) if hist_min else None,
+        'Hist_Median': round(hist_median, 0) if hist_median else None,
+        'Hist_Max': round(hist_max, 0) if hist_max else None,
+        f'Recent_{RECENCY_WINDOW}d_Count': recent_count,
+        f'Recent_{RECENCY_WINDOW}d_Min': round(recent_min, 0) if recent_min else None,
+        f'Recent_{RECENCY_WINDOW}d_Median': round(recent_median, 0) if recent_median else None,
+        f'Recent_{RECENCY_WINDOW}d_Max': round(recent_max, 0) if recent_max else None,
+        # Sell price (shipper) stats
+        'Hist_Sell_Min': round(hist_sell_min, 0) if hist_sell_min else None,
+        'Hist_Sell_Median': round(hist_sell_median, 0) if hist_sell_median else None,
+        'Hist_Sell_Max': round(hist_sell_max, 0) if hist_sell_max else None,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Min': round(recent_sell_min, 0) if recent_sell_min else None,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Median': round(recent_sell_median, 0) if recent_sell_median else None,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Max': round(recent_sell_max, 0) if recent_sell_max else None,
         'Buy_Price': pricing['buy_price'],
-        'Rec_Sell_Price': pricing['sell_price'],
-        'Ref_Sell_Price': pricing['ref_sell_price'],
+        'Rec_Sell_Price': pricing['sell_price'],  # Recommended sell (buy + margin)
+        'Ref_Sell_Price': pricing['ref_sell_price'],  # Reference sell (market data)
         'Ref_Sell_Source': pricing['ref_sell_source'],
         'Rental_Cost': pricing['rental_cost'],
         'Target_Margin': pricing['target_margin'],
         'Backhaul_Probability': pricing['backhaul_probability'],
+        'Backhaul_Ratio': pricing['backhaul_ratio'],
         'Model_Used': pricing['model_used'],
         'Confidence': pricing['confidence'],
-        'Cost_Per_KM': round(pricing['buy_price']/distance, 2) if pricing['buy_price'] and distance > 0 else None,
-        'Is_Rare_Lane': r_count == 0,
-        'Backhaul_Ratio': pricing['backhaul_ratio']
+        'Cost_Per_KM': round(pricing['buy_price'] / distance, 2) if pricing['buy_price'] and distance > 0 else None,
+        'Is_Rare_Lane': is_rare_lane,
     }
     
-    # Add model comparators
+    # Add model predictions for comparison
     if index_shrink_predictor:
-        p = index_shrink_predictor.predict(pickup_ar, dest_ar, distance)
-        result['IndexShrink_Price'] = p.get('predicted_cost')
-        result['IndexShrink_Upper'] = p.get('cost_high')
-        result['IndexShrink_Method'] = p['method']
+        idx_pred = index_shrink_predictor.predict(pickup_ar, dest_ar, distance)
+        result['IndexShrink_Price'] = idx_pred.get('predicted_cost')
+        result['IndexShrink_Upper'] = idx_pred.get('cost_high')
+        result['IndexShrink_Method'] = idx_pred['method']
+    
     if blend_predictor:
-        p = blend_predictor.predict(pickup_ar, dest_ar, distance)
-        result['Blend_Price'] = p.get('predicted_cost')
-        result['Blend_Upper'] = p.get('cost_high')
-        result['Blend_Method'] = p['method']
-        
+        blend_pred = blend_predictor.predict(pickup_ar, dest_ar, distance)
+        result['Blend_Price'] = blend_pred.get('predicted_cost')
+        result['Blend_Upper'] = blend_pred.get('cost_high')
+        result['Blend_Method'] = blend_pred['method']
+    
     return result
 
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
@@ -1065,9 +1074,10 @@ with tab1:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🚛 Rental Index", f"{result['Rental_Cost']:,.0f} SAR" if result['Rental_Cost'] else "N/A")
         c2.metric("📈 REF. SELL", f"{result['Ref_Sell_Price']:,} SAR" if result['Ref_Sell_Price'] else "N/A", help=f"Source: {result.get('Ref_Sell_Source')}")
+        c3.empty()
         c4.metric("🔄 Backhaul", f"{ {'High':'🟢','Medium':'🟡','Low':'🔴','Unknown':'⚪'}.get(result['Backhaul_Probability'],'⚪') } {result['Backhaul_Probability']}")
         
-        st.caption(f"Model: **{result['Model_Used']}** | CPK: {result['Cost_Per_KM']} SAR/km")
+        st.caption(f"Model: **{result['Model_Used']}** | CPK: {result['Cost_Per_KM']} SAR/km | Ref. Sell Source: {result.get('Ref_Sell_Source', 'N/A')}")
         
         if result['Is_Rare_Lane']:
             st.warning(f"⚠️ **Rare Lane** - No recent loads. Using model prediction.")
@@ -1190,7 +1200,19 @@ with tab2:
         except Exception as e: st.error(f"Error: {e}")
 
 # EXCEPTION LOG
-if st.session_state.get('error_log'):
-    with st.expander("⚠️ Exception Log"):
-        st.dataframe(pd.DataFrame(st.session_state.error_log))
-        if st.button("Clear Log"): clear_error_log(); st.rerun()
+st.markdown("---")
+error_log_csv = get_error_log_csv()
+if error_log_csv:
+    with st.expander("⚠️ Exception Log", expanded=False):
+        st.caption(f"{len(st.session_state.error_log)} exceptions logged this session")
+        st.dataframe(pd.DataFrame(st.session_state.error_log), use_container_width=True, hide_index=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button("📥 Download Error Log", error_log_csv, "pricing_error_log.csv", "text/csv")
+        with col2:
+            if st.button("🗑️ Clear Log"):
+                clear_error_log()
+                st.rerun()
+
+st.caption("Freight Pricing Tool | Buy Price rounded to 100 | Sell Price rounded to 50 | All prices in SAR")

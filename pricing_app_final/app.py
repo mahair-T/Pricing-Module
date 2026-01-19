@@ -195,42 +195,77 @@ def clear_error_log():
     """Clear the session error log."""
     st.session_state.error_log = []
 
-def upload_to_gsheet(df):
+def upload_to_gsheet(df, batch_size=500, progress_callback=None):
     """
-    Upload dataframe to Google Sheet.
+    Upload dataframe to Google Sheet in batches.
     
     Gets a FRESH connection each time (not cached) to avoid stale connection issues.
-    Clears the sheet first, then writes header + data.
+    Writes data in batches to avoid API limits and timeouts.
+    
+    Args:
+        df: DataFrame to upload
+        batch_size: Number of rows per batch (default 500)
+        progress_callback: Optional function to call with progress updates
     """
+    import time
+    
     try:
         wks = get_bulk_sheet()
         if not wks:
             return False, "❌ Google Cloud credentials not found or sheet access denied. Check secrets configuration."
         
-        # Clear existing data
-        wks.clear()
+        # Clear existing data first
+        try:
+            wks.clear()
+        except Exception as e:
+            return False, f"❌ Failed to clear sheet: {str(e)}"
         
         # Convert all values to string for JSON serialization (gspread requirement)
-        data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
+        headers = df.columns.values.tolist()
+        data_rows = df.astype(str).values.tolist()
+        total_rows = len(data_rows)
         
-        # Write data - try the range-based method first, fall back to simple update
+        # Write header row first
         try:
-            wks.update('A1', data)
-        except Exception as e1:
+            wks.update('A1', [headers])
+        except Exception as e:
+            return False, f"❌ Failed to write headers: {str(e)}"
+        
+        # Write data in batches
+        rows_written = 0
+        batch_num = 0
+        
+        for i in range(0, total_rows, batch_size):
+            batch = data_rows[i:i + batch_size]
+            start_row = i + 2  # +2 because row 1 is header, and sheets are 1-indexed
+            
             try:
-                wks.update(data)
-            except Exception as e2:
-                return False, f"❌ Write failed: {str(e2)}"
+                # Calculate the range for this batch
+                range_str = f'A{start_row}'
+                
+                wks.update(range_str, batch)
+                rows_written += len(batch)
+                batch_num += 1
+                
+                # Call progress callback if provided
+                if progress_callback:
+                    progress_callback(rows_written, total_rows, batch_num)
+                
+                # Small delay between batches to avoid rate limiting
+                if i + batch_size < total_rows:
+                    time.sleep(0.5)
+                    
+            except Exception as e:
+                return False, f"❌ Failed at batch {batch_num + 1} (rows {start_row}-{start_row + len(batch) - 1}): {str(e)}"
         
         # Add timestamp row at the end
-        from datetime import datetime
         timestamp_row = [f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]
         try:
-            wks.append_row(timestamp_row)
+            wks.update(f'A{total_rows + 2}', [timestamp_row])
         except:
             pass  # Non-critical, ignore if it fails
             
-        return True, f"✅ Successfully uploaded {len(df)} rows to '{BULK_TAB_NAME}'"
+        return True, f"✅ Successfully uploaded {rows_written} rows to '{BULK_TAB_NAME}' in {batch_num} batches"
     except Exception as e:
         return False, f"❌ Upload error: {str(e)}"
 
@@ -1095,20 +1130,38 @@ with tab1:
         if not result['Is_Rare_Lane']:
             st.markdown("---")
             st.subheader("🚚 Your Ammunition (Recent Matches)")
-            same, other = get_ammunition_loads(f"{pickup_city} → {destination_city}", vehicle_type, comm_in)
-            if len(same) > 0:
-                st.markdown(f"**Same Commodity ({comm_in if comm_in else result['Commodity']}):**")
-                disp = same[['pickup_date', 'total_carrier_price', 'days_ago']].copy()
-                disp.columns = ['Date', 'Carrier (SAR)', 'Days Ago']
-                disp['Carrier (SAR)'] = disp['Carrier (SAR)'].round(0).astype(int)
-                st.dataframe(disp, use_container_width=True, hide_index=True)
-            if len(other) > 0:
+            
+            lane_ar = f"{pickup_city} → {destination_city}"
+            same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, comm_in)
+            
+            commodity_used = to_english_commodity(comm_in) if comm_in else result['Commodity']
+            if len(same_samples) > 0:
+                st.markdown(f"**Same Commodity ({commodity_used}):**")
+                same_samples['Lane_EN'] = same_samples['pickup_city'].apply(to_english_city) + ' → ' + same_samples['destination_city'].apply(to_english_city)
+                same_samples['Commodity_EN'] = same_samples['commodity'].apply(to_english_commodity)
+                display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
+                display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
+                st.dataframe(display_same, use_container_width=True, hide_index=True)
+            else:
+                st.caption(f"No recent loads with {commodity_used}")
+            
+            if len(other_samples) > 0:
                 st.markdown("**Other Commodities:**")
-                disp = other[['pickup_date', 'commodity', 'total_carrier_price', 'days_ago']].copy()
-                disp['commodity'] = disp['commodity'].apply(to_english_commodity)
-                disp.columns = ['Date', 'Commodity', 'Carrier (SAR)', 'Days Ago']
-                disp['Carrier (SAR)'] = disp['Carrier (SAR)'].round(0).astype(int)
-                st.dataframe(disp, use_container_width=True, hide_index=True)
+                other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
+                other_samples['Commodity_EN'] = other_samples['commodity'].apply(to_english_commodity)
+                display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
+                display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
+                st.dataframe(display_other, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No recent loads with other commodities")
+            
+            total_shown = len(same_samples) + len(other_samples)
+            if total_shown > 0:
+                st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
 
     if 'last_result' in st.session_state and 'last_lane' in st.session_state:
         st.markdown("---")
@@ -1174,10 +1227,19 @@ with tab2:
         st.subheader("☁️ Cloud Upload")
         st.caption(f"Target Sheet: `{BULK_PRICING_SHEET_URL}`")
         if st.button("☁️ Upload Results to Google Sheet"):
-            with st.spinner("Uploading..."):
-                ok, msg = upload_to_gsheet(res_df)
-                if ok: st.success(msg)
-                else: st.error(msg)
+            upload_progress = st.progress(0)
+            upload_status = st.empty()
+            
+            def update_progress(rows_done, total_rows, batch_num):
+                upload_progress.progress(rows_done / total_rows)
+                upload_status.text(f"Uploaded {rows_done:,}/{total_rows:,} rows (batch {batch_num})...")
+            
+            ok, msg = upload_to_gsheet(res_df, batch_size=500, progress_callback=update_progress)
+            
+            upload_progress.progress(1.0)
+            upload_status.empty()
+            if ok: st.success(msg)
+            else: st.error(msg)
 
     if 'bulk_unmatched' in st.session_state and not st.session_state.bulk_unmatched.empty:
         st.warning(f"{len(st.session_state.bulk_unmatched)} unmatched cities")
@@ -1190,39 +1252,50 @@ with tab2:
     # ============================================
     st.markdown("---")
     with st.expander("⚡ Admin: Generate Master Grid (All Cities)"):
-        st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a minute.")
+        st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a few minutes.")
         st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
         
         if st.button("🚀 Run & Upload Master Grid"):
-            with st.spinner("Generating full market pricing..."):
-                master_res = []
-                # Cartesian product of all canonical cities (excluding same-city routes)
-                combos = list(itertools.product(all_canonicals, all_canonicals))
-                prog = st.progress(0)
-                status_text = st.empty()
-                
-                for i, (p_ar, d_ar) in enumerate(combos):
-                    if p_ar == d_ar: continue  # Skip same-city routes
-                    master_res.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR))
-                    if i % 50 == 0: 
-                        prog.progress((i+1)/len(combos))
-                        status_text.text(f"Processing {i+1}/{len(combos)} combinations...")
-                
-                master_df = pd.DataFrame(master_res)
-                status_text.text("Uploading to Google Sheet...")
-                st.success(f"✅ Generated {len(master_df)} routes.")
-                
-                # Store in session state for potential download
-                st.session_state.master_grid_df = master_df
-                
-                # Upload to Google Sheet (uses fresh connection, not cached)
-                ok, msg = upload_to_gsheet(master_df)
-                if ok: 
-                    st.success(msg)
-                    status_text.text("Upload complete!")
-                else: 
-                    st.error(msg)
-                    status_text.text("Upload failed - check error message above")
+            # Phase 1: Generate pricing data
+            st.info("📊 Phase 1: Generating pricing data...")
+            master_res = []
+            # Cartesian product of all canonical cities (excluding same-city routes)
+            combos = list(itertools.product(all_canonicals, all_canonicals))
+            gen_progress = st.progress(0)
+            gen_status = st.empty()
+            
+            for i, (p_ar, d_ar) in enumerate(combos):
+                if p_ar == d_ar: continue  # Skip same-city routes
+                master_res.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR))
+                if i % 50 == 0: 
+                    gen_progress.progress((i+1)/len(combos))
+                    gen_status.text(f"Generating {i+1}/{len(combos)} combinations...")
+            
+            gen_progress.progress(1.0)
+            master_df = pd.DataFrame(master_res)
+            gen_status.text(f"✅ Generated {len(master_df)} routes.")
+            
+            # Store in session state for potential download
+            st.session_state.master_grid_df = master_df
+            
+            # Phase 2: Upload to Google Sheet in batches
+            st.info("☁️ Phase 2: Uploading to Google Sheet...")
+            upload_progress = st.progress(0)
+            upload_status = st.empty()
+            
+            def update_upload_progress(rows_done, total_rows, batch_num):
+                upload_progress.progress(rows_done / total_rows)
+                upload_status.text(f"Uploaded {rows_done:,}/{total_rows:,} rows (batch {batch_num})...")
+            
+            ok, msg = upload_to_gsheet(master_df, batch_size=500, progress_callback=update_upload_progress)
+            
+            upload_progress.progress(1.0)
+            if ok: 
+                upload_status.empty()
+                st.success(msg)
+            else: 
+                upload_status.empty()
+                st.error(msg)
         
         # Allow download of master grid if it was generated
         if 'master_grid_df' in st.session_state:

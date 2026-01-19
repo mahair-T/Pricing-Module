@@ -20,7 +20,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # 🔧 CONFIGURATION
 # ============================================
 # PASTE YOUR GOOGLE SHEET URL BELOW
-BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit"
+BULK_PRICING_SHEET_URL = st.secrets["all_lanes_url"]
 
 def normalize_english_text(text):
     """Normalize English text for lookups - lowercase, strip, normalize whitespace/hyphens."""

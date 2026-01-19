@@ -23,6 +23,12 @@ st.set_page_config(page_title="Freight Pricing Tool", page_icon="🚚", layout="
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ============================================
+# 🔧 CONFIGURATION
+# ============================================
+# PASTE YOUR GOOGLE SHEET URL BELOW for the Bulk Upload Button
+BULK_PRICING_SHEET_URL = st.secrets["all_lanes_url"]
+
+# ============================================
 # ERROR LOGGING (Google Sheets)
 # ============================================
 def get_gsheet_client():
@@ -1603,6 +1609,45 @@ with tab2:
         
         except Exception as e:
             st.error(f"Error: {str(e)}")
+            
+    st.markdown("---")
+    st.subheader("☁️ Cloud Upload")
+    
+    # Helper function to handle the upload
+    def upload_to_gsheet(df, sheet_url):
+        try:
+            client = get_gsheet_client()
+            if not client: 
+                return False, "❌ Google Cloud credentials not found in Secrets."
+            
+            sh = client.open_by_url(sheet_url)
+            
+            # Try to get or create a specific worksheet for this data
+            WORKSHEET_NAME = "All_Lanes_Data"
+            try:
+                wks = sh.worksheet(WORKSHEET_NAME)
+            except:
+                wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+20, cols=len(df.columns)+5)
+            
+            # Clear and update
+            wks.clear()
+            # gspread requires data as list of lists, including headers
+            data = [df.columns.values.tolist()] + df.values.tolist()
+            wks.update(data)
+            return True, f"✅ Successfully uploaded {len(df)} rows to '{WORKSHEET_NAME}'"
+        except Exception as e:
+            return False, f"❌ Error: {str(e)}"
+
+    st.caption(f"Target Sheet: `{BULK_PRICING_SHEET_URL}`")
+    
+    if st.button("☁️ Upload Results to Google Sheet", disabled=(len(results_df) == 0)):
+        with st.spinner("Uploading to Google Sheets..."):
+            success, msg = upload_to_gsheet(results_df, BULK_PRICING_SHEET_URL)
+            if success:
+                st.success(msg)
+            else:
+                st.error(msg)
+
 
 # ============================================
 # ERROR LOG SECTION

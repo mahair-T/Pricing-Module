@@ -106,10 +106,18 @@ def get_reported_sheet():
     except Exception as e:
         return None
 
-# NEW: Helper for Bulk Sheet (Matches the logic of the others exactly)
-@st.cache_resource
+# ============================================
+# BULK SHEET HELPER - NO CACHING (connections can go stale)
+# ============================================
 def get_bulk_sheet():
-    """Get or create the All Lanes sheet."""
+    """
+    Get or create the All Lanes sheet.
+    
+    NOTE: This function is NOT cached because:
+    1. Google Sheets connections can become stale/expire
+    2. Each upload should get a fresh connection
+    3. Caching the worksheet object leads to silent failures
+    """
     try:
         client = get_gsheet_client()
         if client is None:
@@ -120,10 +128,12 @@ def get_bulk_sheet():
         try:
             worksheet = spreadsheet.worksheet(BULK_TAB_NAME)
         except:
+            # Create the sheet if it doesn't exist
             worksheet = spreadsheet.add_worksheet(title=BULK_TAB_NAME, rows=5000, cols=20)
             
         return worksheet
     except Exception as e:
+        st.error(f"Google Sheets connection error: {str(e)}")
         return None
 
 def log_exception(exception_type, details):
@@ -186,58 +196,100 @@ def clear_error_log():
     st.session_state.error_log = []
 
 def upload_to_gsheet(df):
-    """Upload dataframe to Google Sheet using the cached connection."""
+    """
+    Upload dataframe to Google Sheet.
+    
+    Gets a FRESH connection each time (not cached) to avoid stale connection issues.
+    Clears the sheet first, then writes header + data.
+    """
     try:
         wks = get_bulk_sheet()
         if not wks:
-            return False, "❌ Google Cloud credentials not found or access denied."
+            return False, "❌ Google Cloud credentials not found or sheet access denied. Check secrets configuration."
         
+        # Clear existing data
         wks.clear()
         
-        # Convert all to string to allow JSON serialization
+        # Convert all values to string for JSON serialization (gspread requirement)
         data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         
-        # Robust Write
+        # Write data - try the range-based method first, fall back to simple update
         try:
             wks.update('A1', data)
+        except Exception as e1:
+            try:
+                wks.update(data)
+            except Exception as e2:
+                return False, f"❌ Write failed: {str(e2)}"
+        
+        # Add timestamp row at the end
+        from datetime import datetime
+        timestamp_row = [f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]
+        try:
+            wks.append_row(timestamp_row)
         except:
-            wks.update(data)
+            pass  # Non-critical, ignore if it fails
             
         return True, f"✅ Successfully uploaded {len(df)} rows to '{BULK_TAB_NAME}'"
     except Exception as e:
-        return False, f"❌ Error: {str(e)}"
+        return False, f"❌ Upload error: {str(e)}"
 
 # ============================================
 # FIXED SETTINGS
 # ============================================
-N_SIMILAR = 10
-MIN_DAYS_APART = 5
-MAX_AGE_DAYS = 180
-RECENT_PRIORITY_DAYS = 30
-RECENCY_WINDOW = 90
-RENTAL_COST_PER_DAY = 800
-RENTAL_KM_PER_DAY = 600
+# Sampling parameters for ammunition display
+N_SIMILAR = 10          # Number of similar loads to consider
+MIN_DAYS_APART = 5      # Minimum days between samples (prevents clustering)
+MAX_AGE_DAYS = 180      # Maximum age of loads to show as ammunition
+RECENT_PRIORITY_DAYS = 30  # Prioritize loads within this window
+
+# Recency model window - loads within this window use recency-based pricing
+RECENCY_WINDOW = 90     # Days to consider for recency model
+
+# Rental cost index parameters (reference for minimum viable price)
+RENTAL_COST_PER_DAY = 800   # SAR per day rental cost
+RENTAL_KM_PER_DAY = 600     # km that equals one day of rental
+
+# Error bar percentages by confidence level (for price ranges)
 ERROR_BARS = {'High': 0.10, 'Medium': 0.15, 'Low': 0.25, 'Very Low': 0.35}
-MARGIN_HIGH_BACKHAUL = 0.12
-MARGIN_MEDIUM_BACKHAUL = 0.18
-MARGIN_LOW_BACKHAUL = 0.25
-MARGIN_UNKNOWN = 0.20
-BACKHAUL_HIGH_THRESHOLD = 0.85
-BACKHAUL_MEDIUM_THRESHOLD = 0.65
+
+# Margin settings based on backhaul probability
+# Higher margin when backhaul is unlikely (carrier has to deadhead back)
+MARGIN_HIGH_BACKHAUL = 0.12      # 12% margin when good backhaul probability
+MARGIN_MEDIUM_BACKHAUL = 0.18    # 18% margin for medium backhaul
+MARGIN_LOW_BACKHAUL = 0.25       # 25% margin when poor backhaul (deadhead likely)
+MARGIN_UNKNOWN = 0.20            # 20% default when no backhaul data available
+
+# Backhaul thresholds (inbound/outbound CPK ratio)
+# High ratio = good inbound demand = carrier likely finds return load
+BACKHAUL_HIGH_THRESHOLD = 0.85   # Ratio > 0.85 = High backhaul probability
+BACKHAUL_MEDIUM_THRESHOLD = 0.65 # Ratio 0.65-0.85 = Medium backhaul probability
+# Below 0.65 = Low backhaul probability (carrier likely deadheads)
 
 # ============================================
 # LOAD CITY NORMALIZATION
+# Maps city name variants (Arabic, English, misspellings) to canonical forms
+# Also loads region mappings for regional pricing models
 # ============================================
 @st.cache_resource
 def load_city_normalization():
-    """Load city normalization from CSV."""
+    """
+    Load city normalization from CSV.
+    
+    The CSV contains:
+    - variant: Different ways a city might be written (Arabic, English, typos)
+    - canonical: The standard Arabic form we normalize to
+    - region: Geographic region (Eastern, Western, Central, etc.)
+    
+    Returns multiple lookup dictionaries for flexible matching.
+    """
     norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_with_regions.csv')
     
-    variant_to_canonical = {}
-    variant_to_canonical_lower = {}
-    variant_to_region = {}
-    canonical_to_region = {}
-    canonical_to_english = {} 
+    variant_to_canonical = {}       # Exact match lookup
+    variant_to_canonical_lower = {} # Lowercase lookup for English names
+    variant_to_region = {}          # Variant -> Region mapping
+    canonical_to_region = {}        # Canonical -> Region mapping
+    canonical_to_english = {}       # Canonical Arabic -> English display name
     
     if os.path.exists(norm_path):
         try:
@@ -250,6 +302,7 @@ def load_city_normalization():
 
                 variant_to_canonical[variant] = canonical
                 
+                # Also add lowercase version for case-insensitive English matching
                 variant_lower = normalize_english_text(variant)
                 if variant_lower:
                     variant_to_canonical_lower[variant_lower] = canonical
@@ -259,6 +312,8 @@ def load_city_normalization():
                     if canonical not in canonical_to_region:
                         canonical_to_region[canonical] = region
             
+            # Build English display names from variants
+            # Prefer title-case ASCII variants as English names
             grouped = df.groupby('canonical')['variant'].apply(list)
             for canonical, variants in grouped.items():
                 english_name = None
@@ -281,44 +336,63 @@ CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 
 # ============================================
 # HELPER FUNCTIONS
+# City normalization and translation utilities
 # ============================================
 def normalize_city(city_raw):
-    """Normalize city name to standard Arabic canonical form."""
+    """
+    Normalize city name to standard Arabic canonical form.
+    
+    Lookup order:
+    1. Exact match in normalization CSV
+    2. Lowercase/normalized English match
+    3. Reverse lookup from English->Arabic mapping
+    
+    Returns: (canonical_name, was_matched)
+    """
     if pd.isna(city_raw) or city_raw == '':
         return None, False
     city = str(city_raw).strip()
     
+    # Try exact match first
     if city in CITY_TO_CANONICAL:
         return CITY_TO_CANONICAL[city], True
     
+    # Try lowercase/normalized lookup (handles "JEDDAH", "jeddah", etc.)
     city_lower = normalize_english_text(city)
     if city_lower and city_lower in CITY_TO_CANONICAL_LOWER:
         return CITY_TO_CANONICAL_LOWER[city_lower], True
     
+    # Try reverse lookup from English display names
     if city in CITY_EN_TO_AR:
         return CITY_EN_TO_AR[city], True
 
+    # Return as-is with match=False (will be logged as unmatched)
     return city, False
 
 def get_city_region(city):
+    """Get region for a city (checks both variant and canonical mappings)."""
     if city in CITY_TO_REGION:
         return CITY_TO_REGION[city]
     if city in CANONICAL_TO_REGION:
         return CANONICAL_TO_REGION[city]
+    # Try normalizing first then looking up
     canonical = CITY_TO_CANONICAL.get(city, city)
     if canonical in CANONICAL_TO_REGION:
         return CANONICAL_TO_REGION[canonical]
     return None
 
 def to_english_city(city_ar):
+    """Convert Arabic city name to English display name."""
     if city_ar in CITY_AR_TO_EN:
         return CITY_AR_TO_EN[city_ar]
+    # Try normalizing first
     norm, found = normalize_city(city_ar)
     if found and norm in CITY_AR_TO_EN:
         return CITY_AR_TO_EN[norm]
     return city_ar
 
 def to_arabic_city(city_en):
+    """Convert English city name to canonical Arabic form."""
     if city_en in CITY_EN_TO_AR:
         return CITY_EN_TO_AR[city_en]
     norm, found = normalize_city(city_en)
@@ -370,20 +444,32 @@ def to_arabic_commodity(commodity_en):
     return COMMODITY_AR.get(commodity_en, commodity_en)
 
 # ============================================
-# INDEX + SHRINKAGE MODEL
+# INDEX + SHRINKAGE MODEL (Rare Lane Model)
+# Used for lanes WITH some historical data
+# Combines market index trends with shrinkage estimation
 # ============================================
 class IndexShrinkagePredictor:
-    """Index + Shrinkage model for lanes with some historical data."""
+    """
+    Index + Shrinkage model for lanes with some historical data.
+    
+    Two-component prediction:
+    1. Index: Uses lane-specific multiplier × current market index
+       - Captures how this lane moves relative to market
+    2. Shrinkage: Bayesian estimate that shrinks lane mean toward city prior
+       - Handles sparse data by borrowing strength from similar lanes
+    
+    Final prediction = average of Index and Shrinkage components
+    """
     
     def __init__(self, model_artifacts):
         m = model_artifacts
-        self.current_index = m['current_index']
-        self.lane_multipliers = m['lane_multipliers']
-        self.global_mean = m['global_mean']
-        self.k = m['k_prior_strength']
-        self.pickup_priors = m['pickup_priors']
-        self.dest_priors = m['dest_priors']
-        self.lane_stats = m['lane_stats']
+        self.current_index = m['current_index']      # Current market index value
+        self.lane_multipliers = m['lane_multipliers'] # Lane-specific multipliers
+        self.global_mean = m['global_mean']          # Global mean CPK (fallback)
+        self.k = m['k_prior_strength']               # Shrinkage strength parameter
+        self.pickup_priors = m['pickup_priors']      # City-level priors for pickup
+        self.dest_priors = m['dest_priors']          # City-level priors for destination
+        self.lane_stats = m['lane_stats']            # Historical lane statistics
         self.city_to_region = m.get('city_to_region', {})
         self.regional_cpk = {tuple(k.split('|')): v for k, v in m.get('regional_cpk', {}).items()} if isinstance(list(m.get('regional_cpk', {}).keys())[0] if m.get('regional_cpk') else '', str) else m.get('regional_cpk', {})
         self.model_date = m.get('model_date', 'Unknown')
@@ -476,20 +562,33 @@ class IndexShrinkagePredictor:
         return result
 
 # ============================================
-# BLEND MODEL
+# BLEND MODEL (New Lane Model - 0.7 Regional)
+# Used for completely NEW lanes with NO historical data
+# Blends regional averages with city-level multipliers
 # ============================================
 class BlendPredictor:
-    """Blend model (0.7 Regional + 0.3 City) for completely new lanes."""
+    """
+    Blend model (0.7 Regional + 0.3 City) for completely new lanes.
+    
+    For lanes with zero historical data, we estimate price by:
+    1. Regional CPK: Average CPK for the region pair (e.g., Eastern → Western)
+    2. City Multipliers: Pickup and destination city adjustment factors
+    
+    Final: 70% Regional + 30% City-adjusted
+    
+    This provides a reasonable estimate even for never-seen routes by
+    leveraging geographic patterns in freight pricing.
+    """
     
     def __init__(self, model_artifacts):
         m = model_artifacts
         self.config = m['config']
-        self.regional_weight = self.config.get('regional_weight', 0.7)
+        self.regional_weight = self.config.get('regional_weight', 0.7)  # 70% regional
         self.current_index = m['current_index']
-        self.pickup_city_mult = m['pickup_city_mult']
+        self.pickup_city_mult = m['pickup_city_mult']   # City-specific adjustments
         self.dest_city_mult = m['dest_city_mult']
-        self.city_to_region = m['city_to_region']
-        self.regional_cpk = m['regional_cpk']
+        self.city_to_region = m['city_to_region']       # City → Region mapping
+        self.regional_cpk = m['regional_cpk']           # (Region, Region) → CPK
         self.model_date = self.config.get('training_date', 'Unknown')
     
     def predict(self, pickup_city, dest_city, distance_km=None):
@@ -628,13 +727,25 @@ commodities = sorted(set([to_english_commodity(c) for c in df_knn['commodity'].u
 
 # ============================================
 # PRICING LOGIC
+# Core pricing cascade: Recency → Index+Shrinkage → Blend → Default
 # ============================================
 @st.cache_data
 def calculate_city_cpk_stats():
+    """
+    Calculate inbound/outbound CPK stats per city.
+    Used for backhaul probability estimation.
+    
+    High inbound CPK relative to outbound = good backhaul probability
+    (carriers can find return loads easily)
+    """
     city_stats = {}
     if len(df_knn) == 0: return {}
+    
+    # Outbound stats (city as pickup)
     outbound = df_knn.groupby('pickup_city').agg({'total_carrier_price': 'median', 'distance': 'median'}).reset_index()
     outbound['outbound_cpk'] = outbound['total_carrier_price'] / outbound['distance']
+    
+    # Inbound stats (city as destination)
     inbound = df_knn.groupby('destination_city').agg({'total_carrier_price': 'median', 'distance': 'median'}).reset_index()
     inbound['inbound_cpk'] = inbound['total_carrier_price'] / inbound['distance']
     
@@ -649,6 +760,16 @@ def calculate_city_cpk_stats():
 CITY_CPK_STATS = calculate_city_cpk_stats()
 
 def get_backhaul_probability(dest_city):
+    """
+    Estimate backhaul probability for destination city.
+    
+    Based on inbound/outbound CPK ratio:
+    - High ratio (>0.85): Strong inbound demand, carrier likely finds return load
+    - Medium ratio (0.65-0.85): Moderate backhaul opportunity
+    - Low ratio (<0.65): Weak inbound demand, carrier likely deadheads back
+    
+    Returns: (probability_label, margin_to_apply, ratio)
+    """
     stats = CITY_CPK_STATS.get(dest_city, {})
     i, o = stats.get('inbound_cpk'), stats.get('outbound_cpk')
     if i is None or o is None or o == 0: return 'Unknown', MARGIN_UNKNOWN, None
@@ -658,11 +779,20 @@ def get_backhaul_probability(dest_city):
     return 'Low', MARGIN_LOW_BACKHAUL, ratio
 
 def calculate_rental_cost(distance_km):
+    """
+    Calculate rental cost index as price floor reference.
+    Based on 800 SAR/day at 600 km/day.
+    Rounds to nearest 0.5 day for trips > 1 day.
+    """
     if not distance_km or distance_km <= 0: return None
     days = distance_km / RENTAL_KM_PER_DAY
     return round((1.0 if days < 1 else round(days * 2) / 2) * RENTAL_COST_PER_DAY, 0)
 
 def calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, recommended_sell):
+    """
+    Get reference sell price from historical shipper prices.
+    Priority: Recent 90d median → Historical median → Recommended
+    """
     recent = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
     if len(recent) > 0: return round(recent['total_shipper_price'].median(), 0), 'Recent 90d'
     if len(lane_data) > 0: return round(lane_data['total_shipper_price'].median(), 0), 'Historical'
@@ -670,22 +800,36 @@ def calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, recommen
     return None, 'N/A'
 
 def get_distance(pickup_ar, dest_ar, lane_data=None):
+    """
+    Get distance for a route. Tries multiple sources in order:
+    1. Historical trip data (median of actual trips)
+    2. Reverse lane historical data
+    3. Distance lookup from config
+    4. Distance matrix (canonical and reverse lookups)
+    
+    Returns: (distance_km, source_description)
+    """
     lane, rev_lane = f"{pickup_ar} → {dest_ar}", f"{dest_ar} → {pickup_ar}"
     p_can, d_can = CITY_TO_CANONICAL.get(pickup_ar, pickup_ar), CITY_TO_CANONICAL.get(dest_ar, dest_ar)
     
-    if lane_data is not None and len(lane_data[lane_data['distance'] > 0]) > 0: return lane_data[lane_data['distance'] > 0]['distance'].median(), 'Historical'
+    # Try historical data first
+    if lane_data is not None and len(lane_data[lane_data['distance'] > 0]) > 0: 
+        return lane_data[lane_data['distance'] > 0]['distance'].median(), 'Historical'
     rev_data = df_knn[df_knn['lane'] == rev_lane]
-    if len(rev_data[rev_data['distance'] > 0]) > 0: return rev_data[rev_data['distance'] > 0]['distance'].median(), 'Historical (reverse)'
+    if len(rev_data[rev_data['distance'] > 0]) > 0: 
+        return rev_data[rev_data['distance'] > 0]['distance'].median(), 'Historical (reverse)'
     
+    # Try config lookup
     if DISTANCE_LOOKUP.get(lane): return DISTANCE_LOOKUP[lane], 'Historical'
     if DISTANCE_LOOKUP.get(rev_lane): return DISTANCE_LOOKUP[rev_lane], 'Historical (reverse)'
     
+    # Try distance matrix (multiple lookup patterns)
     if (pickup_ar, dest_ar) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(pickup_ar, dest_ar)], 'Matrix'
     if (p_can, d_can) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(p_can, d_can)], 'Matrix (canonical)'
     if (dest_ar, pickup_ar) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(dest_ar, pickup_ar)], 'Matrix (reverse)'
     if (d_can, p_can) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(d_can, p_can)], 'Matrix (canonical reverse)'
     
-    # Updated to pass correct keys for error log consistency
+    # Log missing distance for debugging
     log_exception('missing_distance', {
         'pickup_city': pickup_ar, 'destination_city': dest_ar,
         'pickup_en': to_english_city(pickup_ar), 'destination_en': to_english_city(dest_ar)
@@ -693,28 +837,53 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     return 0, 'Missing'
 
 def round_to_nearest(value, nearest):
+    """Round value to nearest multiple (e.g., 100 for buy price, 50 for sell price)."""
     return int(round(value / nearest) * nearest) if value and not pd.isna(value) else None
 
 def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None):
+    """
+    Calculate buy/sell prices using the pricing cascade.
+    
+    PRICING CASCADE (in order of preference):
+    1. RECENCY: If recent loads exist (within RECENCY_WINDOW days), use median
+    2. INDEX+SHRINKAGE: If historical data exists, use Index+Shrinkage model
+    3. BLEND: If no lane data, use regional blend model (70% regional + 30% city)
+    4. DEFAULT: Last resort - use default CPK × distance
+    
+    Returns dict with buy_price, sell_price, model_used, confidence, etc.
+    """
     lane = f"{pickup_ar} → {dest_ar}"
     if lane_data is None: lane_data = df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == vehicle_ar)].copy()
     
     recent_count = len(lane_data[lane_data['days_ago'] <= RECENCY_WINDOW])
     
+    # PRICING CASCADE
     if recent_count >= 1:
-        buy_price, model, conf = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]['total_carrier_price'].median(), 'Recency', 'High' if recent_count >= 5 else ('Medium' if recent_count >= 2 else 'Low')
+        # 1. RECENCY MODEL: Use median of recent loads
+        buy_price = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]['total_carrier_price'].median()
+        model = 'Recency'
+        conf = 'High' if recent_count >= 5 else ('Medium' if recent_count >= 2 else 'Low')
     elif index_shrink_predictor and index_shrink_predictor.has_lane_data(lane):
+        # 2. INDEX + SHRINKAGE: Lane has historical data but no recent loads
         p = index_shrink_predictor.predict(pickup_ar, dest_ar, distance_km)
         buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
     elif blend_predictor:
+        # 3. BLEND MODEL: Completely new lane, use regional + city estimates
         p = blend_predictor.predict(pickup_ar, dest_ar, distance_km)
         buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
     else:
-        buy_price, model, conf = (distance_km * 1.8 if distance_km else None), 'Default CPK', 'Very Low'
+        # 4. DEFAULT: Last resort fallback
+        buy_price = distance_km * 1.8 if distance_km else None
+        model, conf = 'Default CPK', 'Very Low'
     
+    # Round buy price to nearest 100 SAR
     buy_rounded = round_to_nearest(buy_price, 100)
+    
+    # Calculate sell price based on backhaul probability
     bh_prob, margin, bh_ratio = get_backhaul_probability(dest_ar)
     sell_rounded = round_to_nearest(buy_rounded * (1 + margin), 50) if buy_rounded else None
+    
+    # Get reference sell price from historical shipper prices
     ref_sell, ref_src = calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, sell_rounded)
     
     return {
@@ -896,19 +1065,21 @@ with tab1:
         
         if hc > 0 or rc > 0:
             c1, c2 = st.columns(2)
+            # Recent data on the LEFT (more actionable)
             with c1:
-                st.markdown("### Historical")
-                st.dataframe(pd.DataFrame({
-                    'Metric': ['Count', 'Min', 'Median', 'Max'],
-                    'Buy Price': [f"{hc} loads" if hc else "—", f"{result['Hist_Min']:,} SAR" if result['Hist_Min'] else "—", f"{result['Hist_Median']:,} SAR" if result['Hist_Median'] else "—", f"{result['Hist_Max']:,} SAR" if result['Hist_Max'] else "—"],
-                    'Sell Price': [f"{hc} loads" if hc else "—", f"{result['Hist_Sell_Min']:,} SAR" if result['Hist_Sell_Min'] else "—", f"{result['Hist_Sell_Median']:,} SAR" if result['Hist_Sell_Median'] else "—", f"{result['Hist_Sell_Max']:,} SAR" if result['Hist_Sell_Max'] else "—"]
-                }), use_container_width=True, hide_index=True)
-            with c2:
                 st.markdown(f"### Recent ({RECENCY_WINDOW}d)")
                 st.dataframe(pd.DataFrame({
                     'Metric': ['Count', 'Min', 'Median', 'Max'],
                     'Buy Price': [f"{rc} loads" if rc else "—", f"{result[f'Recent_{RECENCY_WINDOW}d_Min']:,} SAR" if result[f'Recent_{RECENCY_WINDOW}d_Min'] else "—", f"{result[f'Recent_{RECENCY_WINDOW}d_Median']:,} SAR" if result[f'Recent_{RECENCY_WINDOW}d_Median'] else "—", f"{result[f'Recent_{RECENCY_WINDOW}d_Max']:,} SAR" if result[f'Recent_{RECENCY_WINDOW}d_Max'] else "—"],
                     'Sell Price': [f"{rc} loads" if rc else "—", f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Min']:,} SAR" if result[f'Recent_{RECENCY_WINDOW}d_Sell_Min'] else "—", f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Median']:,} SAR" if result[f'Recent_{RECENCY_WINDOW}d_Sell_Median'] else "—", f"{result[f'Recent_{RECENCY_WINDOW}d_Sell_Max']:,} SAR" if result[f'Recent_{RECENCY_WINDOW}d_Sell_Max'] else "—"]
+                }), use_container_width=True, hide_index=True)
+            # Historical data on the RIGHT (context/reference)
+            with c2:
+                st.markdown("### Historical")
+                st.dataframe(pd.DataFrame({
+                    'Metric': ['Count', 'Min', 'Median', 'Max'],
+                    'Buy Price': [f"{hc} loads" if hc else "—", f"{result['Hist_Min']:,} SAR" if result['Hist_Min'] else "—", f"{result['Hist_Median']:,} SAR" if result['Hist_Median'] else "—", f"{result['Hist_Max']:,} SAR" if result['Hist_Max'] else "—"],
+                    'Sell Price': [f"{hc} loads" if hc else "—", f"{result['Hist_Sell_Min']:,} SAR" if result['Hist_Sell_Min'] else "—", f"{result['Hist_Sell_Median']:,} SAR" if result['Hist_Sell_Median'] else "—", f"{result['Hist_Sell_Max']:,} SAR" if result['Hist_Sell_Max'] else "—"]
                 }), use_container_width=True, hide_index=True)
         else: st.warning("No historical or recent data available")
         
@@ -1012,28 +1183,55 @@ with tab2:
         st.warning(f"{len(st.session_state.bulk_unmatched)} unmatched cities")
         st.dataframe(st.session_state.bulk_unmatched)
 
-    # Master Grid Generator (Always Visible at bottom)
+    # ============================================
+    # MASTER GRID GENERATOR
+    # Generates pricing for all city-to-city combinations
+    # Uploads directly to Google Sheet for reference pricing
+    # ============================================
     st.markdown("---")
     with st.expander("⚡ Admin: Generate Master Grid (All Cities)"):
         st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a minute.")
+        st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
+        
         if st.button("🚀 Run & Upload Master Grid"):
             with st.spinner("Generating full market pricing..."):
                 master_res = []
-                # Cartesian product of all canonical cities
+                # Cartesian product of all canonical cities (excluding same-city routes)
                 combos = list(itertools.product(all_canonicals, all_canonicals))
                 prog = st.progress(0)
+                status_text = st.empty()
+                
                 for i, (p_ar, d_ar) in enumerate(combos):
-                    if p_ar == d_ar: continue
+                    if p_ar == d_ar: continue  # Skip same-city routes
                     master_res.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR))
-                    if i % 50 == 0: prog.progress((i+1)/len(combos))
+                    if i % 50 == 0: 
+                        prog.progress((i+1)/len(combos))
+                        status_text.text(f"Processing {i+1}/{len(combos)} combinations...")
                 
                 master_df = pd.DataFrame(master_res)
-                st.success(f"Generated {len(master_df)} routes.")
+                status_text.text("Uploading to Google Sheet...")
+                st.success(f"✅ Generated {len(master_df)} routes.")
                 
-                # Auto-upload
+                # Store in session state for potential download
+                st.session_state.master_grid_df = master_df
+                
+                # Upload to Google Sheet (uses fresh connection, not cached)
                 ok, msg = upload_to_gsheet(master_df)
-                if ok: st.success(msg)
-                else: st.error(msg)
+                if ok: 
+                    st.success(msg)
+                    status_text.text("Upload complete!")
+                else: 
+                    st.error(msg)
+                    status_text.text("Upload failed - check error message above")
+        
+        # Allow download of master grid if it was generated
+        if 'master_grid_df' in st.session_state:
+            st.download_button(
+                "📥 Download Master Grid CSV", 
+                st.session_state.master_grid_df.to_csv(index=False), 
+                "master_grid.csv", 
+                "text/csv"
+            )
 
 st.markdown("---")
 # ERROR LOG SECTION (Restored to exact snippet)

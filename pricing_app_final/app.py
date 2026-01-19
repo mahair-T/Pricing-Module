@@ -1255,47 +1255,88 @@ with tab2:
         st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a few minutes.")
         st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
         
+        batch_size = st.slider("Batch size", min_value=100, max_value=500, value=250, step=50, 
+                               help="Number of routes to generate and upload at a time")
+        
         if st.button("🚀 Run & Upload Master Grid"):
-            # Phase 1: Generate pricing data
-            st.info("📊 Phase 1: Generating pricing data...")
-            master_res = []
-            # Cartesian product of all canonical cities (excluding same-city routes)
-            combos = list(itertools.product(all_canonicals, all_canonicals))
-            gen_progress = st.progress(0)
-            gen_status = st.empty()
+            import time
             
-            for i, (p_ar, d_ar) in enumerate(combos):
-                if p_ar == d_ar: continue  # Skip same-city routes
-                master_res.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR))
-                if i % 50 == 0: 
-                    gen_progress.progress((i+1)/len(combos))
-                    gen_status.text(f"Generating {i+1}/{len(combos)} combinations...")
-            
-            gen_progress.progress(1.0)
-            master_df = pd.DataFrame(master_res)
-            gen_status.text(f"✅ Generated {len(master_df)} routes.")
-            
-            # Store in session state for potential download
-            st.session_state.master_grid_df = master_df
-            
-            # Phase 2: Upload to Google Sheet in batches
-            st.info("☁️ Phase 2: Uploading to Google Sheet...")
-            upload_progress = st.progress(0)
-            upload_status = st.empty()
-            
-            def update_upload_progress(rows_done, total_rows, batch_num):
-                upload_progress.progress(rows_done / total_rows)
-                upload_status.text(f"Uploaded {rows_done:,}/{total_rows:,} rows (batch {batch_num})...")
-            
-            ok, msg = upload_to_gsheet(master_df, batch_size=500, progress_callback=update_upload_progress)
-            
-            upload_progress.progress(1.0)
-            if ok: 
-                upload_status.empty()
-                st.success(msg)
-            else: 
-                upload_status.empty()
-                st.error(msg)
+            # Get worksheet connection first
+            wks = get_bulk_sheet()
+            if not wks:
+                st.error("❌ Google Cloud credentials not found or sheet access denied.")
+            else:
+                # Clear sheet and write headers
+                try:
+                    wks.clear()
+                    headers = ['From', 'To', 'Distance', 'Buy_Price', 'Rec_Sell', 'Ref_Sell', 
+                               'Ref_Sell_Src', 'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
+                    wks.update('A1', [headers])
+                except Exception as e:
+                    st.error(f"❌ Failed to initialize sheet: {str(e)}")
+                    st.stop()
+                
+                # Build list of all route combinations (excluding same-city)
+                combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
+                total_routes = len(combos)
+                
+                st.info(f"📊 Generating and uploading {total_routes:,} routes in batches of {batch_size}...")
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                rows_written = 0
+                batch_num = 0
+                all_results = []  # Keep for CSV download
+                
+                # Process in batches: generate → write → repeat
+                for i in range(0, total_routes, batch_size):
+                    batch_combos = combos[i:i + batch_size]
+                    batch_num += 1
+                    
+                    # Generate prices for this batch
+                    status_text.text(f"Batch {batch_num}: Generating {len(batch_combos)} routes...")
+                    batch_results = []
+                    for p_ar, d_ar in batch_combos:
+                        batch_results.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR))
+                    
+                    all_results.extend(batch_results)
+                    
+                    # Write this batch to sheet
+                    status_text.text(f"Batch {batch_num}: Writing {len(batch_results)} rows to sheet...")
+                    try:
+                        start_row = rows_written + 2  # +2 for header and 1-indexing
+                        batch_df = pd.DataFrame(batch_results)
+                        data_rows = batch_df.astype(str).values.tolist()
+                        wks.update(f'A{start_row}', data_rows)
+                        rows_written += len(batch_results)
+                    except Exception as e:
+                        st.error(f"❌ Failed at batch {batch_num}: {str(e)}")
+                        st.warning(f"Partial upload: {rows_written} rows written before failure.")
+                        break
+                    
+                    # Update progress
+                    progress_bar.progress(min(1.0, (i + len(batch_combos)) / total_routes))
+                    status_text.text(f"✓ Batch {batch_num} complete | {rows_written:,}/{total_routes:,} routes uploaded")
+                    
+                    # Small delay to avoid rate limiting
+                    if i + batch_size < total_routes:
+                        time.sleep(0.3)
+                
+                # Add timestamp
+                try:
+                    wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+                except:
+                    pass
+                
+                progress_bar.progress(1.0)
+                
+                if rows_written == total_routes:
+                    st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
+                    status_text.empty()
+                
+                # Store for download
+                st.session_state.master_grid_df = pd.DataFrame(all_results)
         
         # Allow download of master grid if it was generated
         if 'master_grid_df' in st.session_state:

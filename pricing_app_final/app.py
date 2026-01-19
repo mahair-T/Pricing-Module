@@ -25,8 +25,8 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # ============================================
 # 🔧 CONFIGURATION
 # ============================================
-# PASTE YOUR GOOGLE SHEET URL BELOW for the Bulk Upload Button
-BULK_PRICING_SHEET_URL = st.secrets["all_lanes_url"]
+# PASTE YOUR GOOGLE SHEET URL BELOW
+BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit"
 
 # ============================================
 # ERROR LOGGING (Google Sheets)
@@ -150,6 +150,32 @@ def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distan
     except Exception as e:
         pass
     return False
+
+def upload_to_gsheet(df, sheet_url):
+    """Helper to upload dataframe to Google Sheet."""
+    try:
+        client = get_gsheet_client()
+        if not client: 
+            return False, "❌ Google Cloud credentials not found in Secrets."
+        
+        sh = client.open_by_url(sheet_url)
+        
+        # Try to get or create a specific worksheet for this data
+        WORKSHEET_NAME = "Bulk_Pricing_Export"
+        try:
+            wks = sh.worksheet(WORKSHEET_NAME)
+        except:
+            wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+20, cols=len(df.columns)+5)
+        
+        # Clear and update
+        wks.clear()
+        # gspread requires data as list of lists, including headers
+        # Convert all to string to avoid JSON serialization errors with numpy types
+        data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
+        wks.update(data)
+        return True, f"✅ Successfully uploaded {len(df)} rows to '{WORKSHEET_NAME}'"
+    except Exception as e:
+        return False, f"❌ Error: {str(e)}"
 
 def get_error_log_csv():
     """Get error log as CSV string."""
@@ -1573,7 +1599,14 @@ with tab2:
                     progress_bar.progress((idx + 1) / len(routes_df))
                 
                 status_text.text("✅ Complete!")
-                results_df = pd.DataFrame(results)
+                
+                # SAVE TO SESSION STATE
+                st.session_state.bulk_results = pd.DataFrame(results)
+                st.session_state.bulk_unmatched = pd.DataFrame(unmatched_cities)
+            
+            # CHECK SESSION STATE FOR RESULTS TO DISPLAY
+            if 'bulk_results' in st.session_state and not st.session_state.bulk_results.empty:
+                results_df = st.session_state.bulk_results
                 
                 st.markdown("---")
                 st.subheader("📊 Results")
@@ -1591,7 +1624,6 @@ with tab2:
                     high_conf = (results_df['Confidence'] == 'High').sum()
                     st.metric("High Conf.", high_conf)
                 
-                # Column explanations
                 st.caption("""
                 **Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference | Rental_Cost = 800 SAR/day × days (rounded)
                 """)
@@ -1601,53 +1633,29 @@ with tab2:
                 st.download_button("📥 Download Results", results_df.to_csv(index=False), 
                                   "route_lookup_results.csv", "text/csv", type="primary")
                 
-                if len(unmatched_cities) > 0:
+                # CLOUD UPLOAD BUTTON
+                st.markdown("---")
+                st.subheader("☁️ Cloud Upload")
+                st.caption(f"Target Sheet: `{BULK_PRICING_SHEET_URL}`")
+                
+                if st.button("☁️ Upload Results to Google Sheet", disabled=(len(results_df) == 0)):
+                    with st.spinner("Uploading to Google Sheets..."):
+                        success, msg = upload_to_gsheet(results_df, BULK_PRICING_SHEET_URL)
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                
+                # DISPLAY UNMATCHED
+                if 'bulk_unmatched' in st.session_state and not st.session_state.bulk_unmatched.empty:
+                    unmatched_df = st.session_state.bulk_unmatched
                     st.markdown("---")
                     st.subheader("⚠️ Unmatched Cities")
-                    st.warning(f"{len(unmatched_cities)} cities could not be matched.")
-                    st.dataframe(pd.DataFrame(unmatched_cities), use_container_width=True, hide_index=True)
+                    st.warning(f"{len(unmatched_df)} cities could not be matched.")
+                    st.dataframe(unmatched_df, use_container_width=True, hide_index=True)
         
         except Exception as e:
             st.error(f"Error: {str(e)}")
-            
-    st.markdown("---")
-    st.subheader("☁️ Cloud Upload")
-    
-    # Helper function to handle the upload
-    def upload_to_gsheet(df, sheet_url):
-        try:
-            client = get_gsheet_client()
-            if not client: 
-                return False, "❌ Google Cloud credentials not found in Secrets."
-            
-            sh = client.open_by_url(sheet_url)
-            
-            # Try to get or create a specific worksheet for this data
-            WORKSHEET_NAME = "All_Lanes_Data"
-            try:
-                wks = sh.worksheet(WORKSHEET_NAME)
-            except:
-                wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+20, cols=len(df.columns)+5)
-            
-            # Clear and update
-            wks.clear()
-            # gspread requires data as list of lists, including headers
-            data = [df.columns.values.tolist()] + df.values.tolist()
-            wks.update(data)
-            return True, f"✅ Successfully uploaded {len(df)} rows to '{WORKSHEET_NAME}'"
-        except Exception as e:
-            return False, f"❌ Error: {str(e)}"
-
-    st.caption(f"Target Sheet: `{BULK_PRICING_SHEET_URL}`")
-    
-    if st.button("☁️ Upload Results to Google Sheet", disabled=(len(results_df) == 0)):
-        with st.spinner("Uploading to Google Sheets..."):
-            success, msg = upload_to_gsheet(results_df, BULK_PRICING_SHEET_URL)
-            if success:
-                st.success(msg)
-            else:
-                st.error(msg)
-
 
 # ============================================
 # ERROR LOG SECTION

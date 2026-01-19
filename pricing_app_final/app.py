@@ -20,7 +20,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # 🔧 CONFIGURATION
 # ============================================
 # PASTE YOUR GOOGLE SHEET URL BELOW
-BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/1u4qyqE626mor0OV1JHYO2Ejd5chmPy3wi1P0AWdhLPw/edit?gid=0#gid=0"
+BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit"
 
 def normalize_english_text(text):
     """Normalize English text for lookups - lowercase, strip, normalize whitespace/hyphens."""
@@ -32,7 +32,7 @@ def normalize_english_text(text):
     return text
 
 # ============================================
-# ERROR LOGGING (Google Sheets)
+# ERROR LOGGING & GSHEET HELPERS
 # ============================================
 def get_gsheet_client():
     """Get Google Sheets client using Streamlit secrets."""
@@ -155,30 +155,53 @@ def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distan
     return False
 
 def upload_to_gsheet(df, sheet_url):
-    """Helper to upload dataframe to Google Sheet."""
+    """
+    Upload dataframe to Google Sheet. 
+    Mirrors the logic of get_error_sheet() for consistency.
+    """
+    if "YOUR_SHEET_ID_HERE" in sheet_url:
+        return False, "❌ Please configure the BULK_PRICING_SHEET_URL in the script code."
+
     try:
+        # 1. Get Client (Same as error logger)
         client = get_gsheet_client()
         if not client: 
             return False, "❌ Google Cloud credentials not found in Secrets."
         
-        sh = client.open_by_url(sheet_url)
+        # 2. Open Sheet
+        try:
+            sh = client.open_by_url(sheet_url)
+        except Exception as e:
+            return False, f"❌ Access Denied: {str(e)}"
         
-        # Try to get or create a specific worksheet for this data
+        # 3. Get/Create Worksheet (Same pattern as error logger)
         WORKSHEET_NAME = "Bulk_Pricing_Export"
         try:
             wks = sh.worksheet(WORKSHEET_NAME)
         except:
             wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+20, cols=len(df.columns)+5)
         
-        # Clear and update
+        # 4. Prepare Data
         wks.clear()
-        # gspread requires data as list of lists, including headers
-        # Convert all to string to avoid JSON serialization errors with numpy types
+        # Convert all to string to allow JSON serialization of numpy types
         data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
-        wks.update(data)
+        
+        # 5. Write Data
+        # We try 'update("A1", data)' first because log_exception uses 'update("A1:G1", ...)'
+        # which implies your environment supports range strings.
+        try:
+            wks.update('A1', data)
+        except Exception:
+            # Fallback for different gspread versions
+            try:
+                wks.update(data)
+            except Exception as e_inner:
+                return False, f"❌ Write Failed: {str(e_inner)}"
+                
         return True, f"✅ Successfully uploaded {len(df)} rows to '{WORKSHEET_NAME}'"
+        
     except Exception as e:
-        return False, f"❌ Error: {str(e)}"
+        return False, f"❌ Unexpected Error: {str(e)}"
 
 def get_error_log_csv():
     """Get error log as CSV string."""
@@ -213,9 +236,7 @@ BACKHAUL_MEDIUM_THRESHOLD = 0.65
 # ============================================
 @st.cache_resource
 def load_city_normalization():
-    """
-    Load city normalization from CSV.
-    """
+    """Load city normalization from CSV."""
     norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_with_regions.csv')
     
     variant_to_canonical = {}
@@ -228,7 +249,6 @@ def load_city_normalization():
         try:
             df = pd.read_csv(norm_path)
             
-            # 1. First Pass: Build basic mappings
             for _, row in df.iterrows():
                 variant = str(row['variant']).strip()
                 canonical = str(row['canonical']).strip()
@@ -245,7 +265,7 @@ def load_city_normalization():
                     if canonical not in canonical_to_region:
                         canonical_to_region[canonical] = region
             
-            # 2. Second Pass: Determine best English display name
+            # Determine best English display name
             grouped = df.groupby('canonical')['variant'].apply(list)
             for canonical, variants in grouped.items():
                 english_name = None

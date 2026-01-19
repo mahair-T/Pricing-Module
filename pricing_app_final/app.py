@@ -32,6 +32,25 @@ def normalize_english_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text
 
+def normalize_aggressive(text):
+    """
+    Aggressive normalization for fuzzy-ish matching.
+    Removes ALL non-alphanumeric characters, lowercases, strips diacritics from Arabic.
+    
+    Examples:
+    - "Al-Jubail" -> "aljubail"
+    - "Al Jubail" -> "aljubail"  
+    - "ALJUBAIL" -> "aljubail"
+    - "Hafar Al Batin" -> "hafaralbatin"
+    - "Hafar Al-Batin" -> "hafaralbatin"
+    """
+    if pd.isna(text) or text is None:
+        return None
+    text = str(text).strip().lower()
+    # Remove all non-alphanumeric characters (keeps Arabic letters too)
+    text = re.sub(r'[^a-z0-9\u0600-\u06ff]', '', text)
+    return text if text else None
+
 # ============================================
 # ERROR LOGGING (Google Sheets) - RESTORED ORIGINAL
 # ============================================
@@ -320,11 +339,12 @@ def load_city_normalization():
     """
     norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_with_regions.csv')
     
-    variant_to_canonical = {}       # Exact match lookup
-    variant_to_canonical_lower = {} # Lowercase lookup for English names
-    variant_to_region = {}          # Variant -> Region mapping
-    canonical_to_region = {}        # Canonical -> Region mapping
-    canonical_to_english = {}       # Canonical Arabic -> English display name
+    variant_to_canonical = {}           # Exact match lookup
+    variant_to_canonical_lower = {}     # Lowercase lookup for English names
+    variant_to_canonical_aggressive = {} # Aggressive normalization (no spaces/punctuation)
+    variant_to_region = {}              # Variant -> Region mapping
+    canonical_to_region = {}            # Canonical -> Region mapping
+    canonical_to_english = {}           # Canonical Arabic -> English display name
     
     if os.path.exists(norm_path):
         try:
@@ -341,6 +361,11 @@ def load_city_normalization():
                 variant_lower = normalize_english_text(variant)
                 if variant_lower:
                     variant_to_canonical_lower[variant_lower] = canonical
+                
+                # Add aggressive normalized version (strips all spaces/punctuation)
+                variant_aggressive = normalize_aggressive(variant)
+                if variant_aggressive:
+                    variant_to_canonical_aggressive[variant_aggressive] = canonical
                 
                 if region:
                     variant_to_region[variant] = region
@@ -363,10 +388,12 @@ def load_city_normalization():
         except Exception as e:
             st.error(f"Error reading normalization file: {e}")
             
-    return variant_to_canonical, variant_to_canonical_lower, variant_to_region, canonical_to_region, canonical_to_english
+    return (variant_to_canonical, variant_to_canonical_lower, variant_to_canonical_aggressive,
+            variant_to_region, canonical_to_region, canonical_to_english)
 
 # Load mappings
-CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN = load_city_normalization()
+(CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_CANONICAL_AGGRESSIVE,
+ CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN) = load_city_normalization()
 CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 
 # ============================================
@@ -380,7 +407,8 @@ def normalize_city(city_raw):
     Lookup order:
     1. Exact match in normalization CSV
     2. Lowercase/normalized English match
-    3. Reverse lookup from English->Arabic mapping
+    3. Aggressive match (strips all spaces/punctuation)
+    4. Reverse lookup from English->Arabic mapping
     
     Returns: (canonical_name, was_matched)
     """
@@ -388,16 +416,21 @@ def normalize_city(city_raw):
         return None, False
     city = str(city_raw).strip()
     
-    # Try exact match first
+    # 1. Try exact match first
     if city in CITY_TO_CANONICAL:
         return CITY_TO_CANONICAL[city], True
     
-    # Try lowercase/normalized lookup (handles "JEDDAH", "jeddah", etc.)
+    # 2. Try lowercase/normalized lookup (handles "JEDDAH", "jeddah", etc.)
     city_lower = normalize_english_text(city)
     if city_lower and city_lower in CITY_TO_CANONICAL_LOWER:
         return CITY_TO_CANONICAL_LOWER[city_lower], True
     
-    # Try reverse lookup from English display names
+    # 3. Try aggressive normalization (handles "Al-Jubail" vs "AlJubail" vs "Al Jubail")
+    city_aggressive = normalize_aggressive(city)
+    if city_aggressive and city_aggressive in CITY_TO_CANONICAL_AGGRESSIVE:
+        return CITY_TO_CANONICAL_AGGRESSIVE[city_aggressive], True
+    
+    # 4. Try reverse lookup from English display names
     if city in CITY_EN_TO_AR:
         return CITY_EN_TO_AR[city], True
 
@@ -1194,9 +1227,15 @@ with tab2:
     if upl:
         try:
             r_df = pd.read_csv(upl)
-            if st.button("🔍 Process", type="primary"):
+            st.success(f"✅ Loaded {len(r_df)} routes")
+            
+            with st.expander("📋 Preview"):
+                st.dataframe(r_df.head(10), use_container_width=True)
+            
+            if st.button("🔍 Look Up All Routes", type="primary", use_container_width=True):
                 res, unmat = [], []
                 prog = st.progress(0)
+                status_text = st.empty()
                 for i, row in r_df.iterrows():
                     p_raw, d_raw = str(row.get('From','')).strip(), str(row.get('To','')).strip()
                     p_ar, p_ok = normalize_city(p_raw)
@@ -1211,6 +1250,8 @@ with tab2:
                     v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['','nan','None','Auto'] else DEFAULT_VEHICLE_AR
                     res.append(lookup_route_stats(p_ar, d_ar, v_ar))
                     prog.progress((i+1)/len(r_df))
+                    status_text.text(f"Looking up {i+1}/{len(r_df)}: {p_raw} → {d_raw}")
+                status_text.text("✅ Complete!")
                 st.session_state.bulk_results = pd.DataFrame(res)
                 st.session_state.bulk_unmatched = pd.DataFrame(unmat)
         except Exception as e: st.error(f"Error: {e}")
@@ -1258,7 +1299,28 @@ with tab2:
         batch_size = st.slider("Batch size", min_value=100, max_value=500, value=250, step=50, 
                                help="Number of routes to generate and upload at a time")
         
-        if st.button("🚀 Run & Upload Master Grid"):
+        # Check if there's a previous incomplete run
+        has_incomplete = 'master_grid_progress' in st.session_state and st.session_state.master_grid_progress.get('incomplete', False)
+        
+        if has_incomplete:
+            prog = st.session_state.master_grid_progress
+            st.warning(f"⚠️ Previous run incomplete: {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                resume_clicked = st.button("🔄 Resume Upload", type="primary")
+            with col2:
+                if st.button("🗑️ Start Fresh"):
+                    del st.session_state.master_grid_progress
+                    if 'master_grid_df' in st.session_state:
+                        del st.session_state.master_grid_df
+                    st.rerun()
+        else:
+            resume_clicked = False
+        
+        start_fresh_clicked = st.button("🚀 Run & Upload Master Grid") if not has_incomplete else False
+        
+        if start_fresh_clicked or resume_clicked:
             import time
             
             # Get worksheet connection first
@@ -1266,31 +1328,43 @@ with tab2:
             if not wks:
                 st.error("❌ Google Cloud credentials not found or sheet access denied.")
             else:
-                # Clear sheet and write headers
-                try:
-                    wks.clear()
-                    headers = ['From', 'To', 'Distance', 'Buy_Price', 'Rec_Sell', 'Ref_Sell', 
-                               'Ref_Sell_Src', 'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
-                    wks.update('A1', [headers])
-                except Exception as e:
-                    st.error(f"❌ Failed to initialize sheet: {str(e)}")
-                    st.stop()
-                
                 # Build list of all route combinations (excluding same-city)
                 combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
                 total_routes = len(combos)
                 
-                st.info(f"📊 Generating and uploading {total_routes:,} routes in batches of {batch_size}...")
+                # Determine starting point
+                if resume_clicked and has_incomplete:
+                    # Resume from where we left off
+                    prog = st.session_state.master_grid_progress
+                    start_index = prog['next_index']
+                    rows_written = prog['rows_written']
+                    batch_num = prog['batch_num']
+                    all_results = prog.get('all_results', [])
+                    st.info(f"📊 Resuming from route {start_index:,} ({rows_written:,} already uploaded)...")
+                else:
+                    # Fresh start - clear sheet and write headers
+                    try:
+                        wks.clear()
+                        headers = ['From', 'To', 'Distance', 'Buy_Price', 'Rec_Sell', 'Ref_Sell', 
+                                   'Ref_Sell_Src', 'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
+                        wks.update('A1', [headers])
+                    except Exception as e:
+                        st.error(f"❌ Failed to initialize sheet: {str(e)}")
+                        st.stop()
+                    
+                    start_index = 0
+                    rows_written = 0
+                    batch_num = 0
+                    all_results = []
+                    st.info(f"📊 Generating and uploading {total_routes:,} routes in batches of {batch_size}...")
                 
-                progress_bar = st.progress(0)
+                progress_bar = st.progress(rows_written / total_routes if total_routes > 0 else 0)
                 status_text = st.empty()
                 
-                rows_written = 0
-                batch_num = 0
-                all_results = []  # Keep for CSV download
+                error_occurred = False
                 
                 # Process in batches: generate → write → repeat
-                for i in range(0, total_routes, batch_size):
+                for i in range(start_index, total_routes, batch_size):
                     batch_combos = combos[i:i + batch_size]
                     batch_num += 1
                     
@@ -1312,7 +1386,18 @@ with tab2:
                         rows_written += len(batch_results)
                     except Exception as e:
                         st.error(f"❌ Failed at batch {batch_num}: {str(e)}")
-                        st.warning(f"Partial upload: {rows_written} rows written before failure.")
+                        st.warning(f"Partial upload: {rows_written:,} rows written. You can resume from here.")
+                        
+                        # Save state for resume
+                        st.session_state.master_grid_progress = {
+                            'incomplete': True,
+                            'next_index': i + batch_size,
+                            'rows_written': rows_written,
+                            'batch_num': batch_num,
+                            'total_routes': total_routes,
+                            'all_results': all_results
+                        }
+                        error_occurred = True
                         break
                     
                     # Update progress
@@ -1323,17 +1408,20 @@ with tab2:
                     if i + batch_size < total_routes:
                         time.sleep(0.3)
                 
-                # Add timestamp
-                try:
-                    wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
-                except:
-                    pass
-                
-                progress_bar.progress(1.0)
-                
-                if rows_written == total_routes:
+                if not error_occurred:
+                    # Add timestamp
+                    try:
+                        wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+                    except:
+                        pass
+                    
+                    progress_bar.progress(1.0)
                     st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
                     status_text.empty()
+                    
+                    # Clear incomplete state
+                    if 'master_grid_progress' in st.session_state:
+                        del st.session_state.master_grid_progress
                 
                 # Store for download
                 st.session_state.master_grid_df = pd.DataFrame(all_results)

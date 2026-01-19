@@ -19,20 +19,21 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # ============================================
 # 🔧 CONFIGURATION
 # ============================================
-# UPDATED MASTER GRID SHEET URL
+# MASTER GRID SHEET URL
 BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/1u4qyqE626mor0OV1JHYO2Ejd5chmPy3wi1P0AWdhLPw/edit"
+BULK_TAB_NAME = "All Lanes"
 
 def normalize_english_text(text):
     """Normalize English text for lookups - lowercase, strip, normalize whitespace/hyphens."""
     if pd.isna(text) or text is None:
         return None
     text = str(text).strip().lower()
-    text = re.sub(r'[-_]+', ' ', text)  # Replace hyphens/underscores with space
-    text = re.sub(r'\s+', ' ', text)    # Collapse multiple spaces
+    text = re.sub(r'[-_]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
     return text
 
 # ============================================
-# GOOGLE SHEETS CONNECTION & LOGGING
+# ERROR LOGGING (Google Sheets) - RESTORED ORIGINAL
 # ============================================
 def get_gsheet_client():
     """Get Google Sheets client using Streamlit secrets."""
@@ -59,7 +60,7 @@ def get_gsheet_client():
 
 @st.cache_resource
 def get_error_sheet():
-    """Get or create the error log sheet (Cached Connection)."""
+    """Get or create the error log sheet."""
     try:
         client = get_gsheet_client()
         if client is None:
@@ -77,27 +78,6 @@ def get_error_sheet():
             worksheet = spreadsheet.add_worksheet(title='ErrorLog', rows=1000, cols=10)
             worksheet.update('A1:G1', [['Timestamp', 'Type', 'Pickup_City', 'Destination_City', 'Pickup_EN', 'Destination_EN', 'Details']])
         
-        return worksheet
-    except Exception as e:
-        return None
-
-@st.cache_resource
-def get_bulk_sheet():
-    """Get or create the bulk export sheet (Cached Connection - Matches Error Log Method)."""
-    try:
-        client = get_gsheet_client()
-        if client is None:
-            return None
-        
-        # Use the constant URL configured at the top
-        spreadsheet = client.open_by_url(BULK_PRICING_SHEET_URL)
-        
-        WORKSHEET_NAME = "Bulk_Pricing_Export"
-        try:
-            worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
-        except:
-            worksheet = spreadsheet.add_worksheet(title=WORKSHEET_NAME, rows=5000, cols=20)
-            
         return worksheet
     except Exception as e:
         return None
@@ -122,6 +102,26 @@ def get_reported_sheet():
             worksheet = spreadsheet.add_worksheet(title='Reported', rows=1000, cols=10)
             worksheet.update('A1:H1', [['Timestamp', 'Pickup_City', 'Destination_City', 'Pickup_EN', 'Destination_EN', 'Current_Distance', 'Issue', 'User_Notes']])
         
+        return worksheet
+    except Exception as e:
+        return None
+
+# NEW: Helper for Bulk Sheet (Matches the logic of the others exactly)
+@st.cache_resource
+def get_bulk_sheet():
+    """Get or create the All Lanes sheet."""
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        spreadsheet = client.open_by_url(BULK_PRICING_SHEET_URL)
+        
+        try:
+            worksheet = spreadsheet.worksheet(BULK_TAB_NAME)
+        except:
+            worksheet = spreadsheet.add_worksheet(title=BULK_TAB_NAME, rows=5000, cols=20)
+            
         return worksheet
     except Exception as e:
         return None
@@ -175,39 +175,6 @@ def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distan
         pass
     return False
 
-def upload_to_gsheet(df):
-    """
-    Upload dataframe to the Master Grid Google Sheet.
-    Uses the cached get_bulk_sheet() for stability.
-    """
-    if "YOUR_SHEET_ID_HERE" in BULK_PRICING_SHEET_URL:
-        return False, "❌ URL Not Configured. Update BULK_PRICING_SHEET_URL."
-
-    try:
-        wks = get_bulk_sheet()
-        if not wks:
-            return False, "❌ Access Denied or Connection Failed. Check Secrets/Sharing."
-        
-        # Clear existing content
-        wks.clear()
-        
-        # Prepare data (Convert to string to avoid JSON errors)
-        data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
-        
-        # Robust write: Try legacy method first (often more stable for simple range writes), then newer
-        try:
-            wks.update('A1', data)
-        except:
-            try:
-                wks.update(data)
-            except Exception as e:
-                return False, f"❌ Write Failed: {str(e)}"
-                
-        return True, f"✅ Successfully uploaded {len(df)} rows to Master Grid."
-        
-    except Exception as e:
-        return False, f"❌ Unexpected Error: {str(e)}"
-
 def get_error_log_csv():
     """Get error log as CSV string."""
     if 'error_log' not in st.session_state or len(st.session_state.error_log) == 0:
@@ -217,6 +184,28 @@ def get_error_log_csv():
 def clear_error_log():
     """Clear the session error log."""
     st.session_state.error_log = []
+
+def upload_to_gsheet(df):
+    """Upload dataframe to Google Sheet using the cached connection."""
+    try:
+        wks = get_bulk_sheet()
+        if not wks:
+            return False, "❌ Google Cloud credentials not found or access denied."
+        
+        wks.clear()
+        
+        # Convert all to string to allow JSON serialization
+        data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
+        
+        # Robust Write
+        try:
+            wks.update('A1', data)
+        except:
+            wks.update(data)
+            
+        return True, f"✅ Successfully uploaded {len(df)} rows to '{BULK_TAB_NAME}'"
+    except Exception as e:
+        return False, f"❌ Error: {str(e)}"
 
 # ============================================
 # FIXED SETTINGS
@@ -696,7 +685,11 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     if (dest_ar, pickup_ar) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(dest_ar, pickup_ar)], 'Matrix (reverse)'
     if (d_can, p_can) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(d_can, p_can)], 'Matrix (canonical reverse)'
     
-    log_exception('missing_distance', {'pickup': pickup_ar, 'dest': dest_ar})
+    # Updated to pass correct keys for error log consistency
+    log_exception('missing_distance', {
+        'pickup_city': pickup_ar, 'destination_city': dest_ar,
+        'pickup_en': to_english_city(pickup_ar), 'destination_en': to_english_city(dest_ar)
+    })
     return 0, 'Missing'
 
 def round_to_nearest(value, nearest):
@@ -986,10 +979,10 @@ with tab2:
                     d_ar, d_ok = normalize_city(d_raw)
                     if not p_ok: 
                         unmat.append({'Row':i+1, 'Col':'From', 'Val':p_raw})
-                        log_exception('unmatched_city', {'row':i+1, 'col':'From', 'val':p_raw})
+                        log_exception('unmatched_city', {'row':i+1, 'column':'From', 'original_value':p_raw})
                     if not d_ok: 
                         unmat.append({'Row':i+1, 'Col':'To', 'Val':d_raw})
-                        log_exception('unmatched_city', {'row':i+1, 'col':'To', 'val':d_raw})
+                        log_exception('unmatched_city', {'row':i+1, 'column':'To', 'original_value':d_raw})
                     v_raw = str(row.get('Vehicle_Type','')).strip()
                     v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['','nan','None','Auto'] else DEFAULT_VEHICLE_AR
                     res.append(lookup_route_stats(p_ar, d_ar, v_ar))
@@ -1043,14 +1036,19 @@ with tab2:
                 else: st.error(msg)
 
 st.markdown("---")
+# ERROR LOG SECTION (Restored to exact snippet)
 error_log_csv = get_error_log_csv()
 if error_log_csv:
     with st.expander("⚠️ Exception Log", expanded=False):
         st.caption(f"{len(st.session_state.error_log)} exceptions logged this session")
         st.dataframe(pd.DataFrame(st.session_state.error_log), use_container_width=True, hide_index=True)
+        
         col1, col2 = st.columns(2)
-        with col1: st.download_button("📥 Download Error Log", error_log_csv, "pricing_error_log.csv", "text/csv")
-        with col2: 
-            if st.button("🗑️ Clear Log"): clear_error_log(); st.rerun()
+        with col1:
+            st.download_button("📥 Download Error Log", error_log_csv, "pricing_error_log.csv", "text/csv")
+        with col2:
+            if st.button("🗑️ Clear Log"):
+                clear_error_log()
+                st.rerun()
 
 st.caption("Freight Pricing Tool | Buy Price rounded to 100 | Sell Price rounded to 50 | All prices in SAR")

@@ -7,17 +7,11 @@ import os
 import io
 import re
 from datetime import datetime
-import itertools # Added for master grid generation
+import itertools 
 
-def normalize_english_text(text):
-    """Normalize English text for lookups - lowercase, strip, normalize whitespace/hyphens."""
-    if pd.isna(text) or text is None:
-        return None
-    text = str(text).strip().lower()
-    text = re.sub(r'[-_]+', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text
-
+# ============================================
+# PAGE CONFIG
+# ============================================
 st.set_page_config(page_title="Freight Pricing Tool", page_icon="🚚", layout="wide")
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,8 +22,17 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # PASTE YOUR GOOGLE SHEET URL BELOW
 BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit"
 
+def normalize_english_text(text):
+    """Normalize English text for lookups - lowercase, strip, normalize whitespace/hyphens."""
+    if pd.isna(text) or text is None:
+        return None
+    text = str(text).strip().lower()
+    text = re.sub(r'[-_]+', ' ', text)  # Replace hyphens/underscores with space
+    text = re.sub(r'\s+', ' ', text)    # Collapse multiple spaces
+    return text
+
 # ============================================
-# ERROR LOGGING & GOOGLE SHEETS
+# ERROR LOGGING (Google Sheets)
 # ============================================
 def get_gsheet_client():
     """Get Google Sheets client using Streamlit secrets."""
@@ -59,56 +62,96 @@ def get_error_sheet():
     """Get or create the error log sheet."""
     try:
         client = get_gsheet_client()
-        if client is None: return None
+        if client is None:
+            return None
         
         sheet_url = st.secrets.get('error_log_sheet_url')
-        if not sheet_url: return None
+        if not sheet_url:
+            return None
         
         spreadsheet = client.open_by_url(sheet_url)
-        try: worksheet = spreadsheet.worksheet('ErrorLog')
+        
+        try:
+            worksheet = spreadsheet.worksheet('ErrorLog')
         except:
             worksheet = spreadsheet.add_worksheet(title='ErrorLog', rows=1000, cols=10)
             worksheet.update('A1:G1', [['Timestamp', 'Type', 'Pickup_City', 'Destination_City', 'Pickup_EN', 'Destination_EN', 'Details']])
+        
         return worksheet
-    except Exception as e: return None
+    except Exception as e:
+        return None
 
 @st.cache_resource
 def get_reported_sheet():
     """Get or create the Reported sheet for user-reported issues."""
     try:
         client = get_gsheet_client()
-        if client is None: return None
+        if client is None:
+            return None
         
         sheet_url = st.secrets.get('error_log_sheet_url')
-        if not sheet_url: return None
+        if not sheet_url:
+            return None
         
         spreadsheet = client.open_by_url(sheet_url)
-        try: worksheet = spreadsheet.worksheet('Reported')
+        
+        try:
+            worksheet = spreadsheet.worksheet('Reported')
         except:
             worksheet = spreadsheet.add_worksheet(title='Reported', rows=1000, cols=10)
             worksheet.update('A1:H1', [['Timestamp', 'Pickup_City', 'Destination_City', 'Pickup_EN', 'Destination_EN', 'Current_Distance', 'Issue', 'User_Notes']])
+        
         return worksheet
-    except Exception as e: return None
+    except Exception as e:
+        return None
 
 def log_exception(exception_type, details):
-    if 'error_log' not in st.session_state: st.session_state.error_log = []
-    log_entry = {'timestamp': datetime.now().isoformat(), 'type': exception_type, **details}
+    """Log exception to Google Sheets."""
+    if 'error_log' not in st.session_state:
+        st.session_state.error_log = []
+    
+    log_entry = {
+        'timestamp': datetime.now().isoformat(),
+        'type': exception_type,
+        **details
+    }
     st.session_state.error_log.append(log_entry)
+    
     try:
         worksheet = get_error_sheet()
         if worksheet:
-            row = [datetime.now().strftime('%Y-%m-%d %H:%M:%S'), exception_type, details.get('pickup_city',''), details.get('destination_city',''), details.get('pickup_en',''), details.get('destination_en',''), str(details)]
+            row = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                exception_type,
+                details.get('pickup_city', details.get('original_value', '')),
+                details.get('destination_city', details.get('normalized_to', '')),
+                details.get('pickup_en', ''),
+                details.get('destination_en', ''),
+                str(details)
+            ]
             worksheet.append_row(row)
-    except: pass
+    except Exception as e:
+        pass
 
 def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distance, issue_type, user_notes=''):
+    """Report a distance issue to the Reported sheet."""
     try:
         worksheet = get_reported_sheet()
         if worksheet:
-            row = [datetime.now().strftime('%Y-%m-%d %H:%M:%S'), pickup_ar, dest_ar, pickup_en, dest_en, str(current_distance), issue_type, user_notes]
+            row = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                pickup_ar,
+                dest_ar,
+                pickup_en,
+                dest_en,
+                str(current_distance),
+                issue_type,
+                user_notes
+            ]
             worksheet.append_row(row)
             return True
-    except: pass
+    except Exception as e:
+        pass
     return False
 
 def upload_to_gsheet(df, sheet_url):
@@ -120,12 +163,17 @@ def upload_to_gsheet(df, sheet_url):
         
         sh = client.open_by_url(sheet_url)
         
+        # Try to get or create a specific worksheet for this data
         WORKSHEET_NAME = "Bulk_Pricing_Export"
-        try: wks = sh.worksheet(WORKSHEET_NAME)
-        except: wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+50, cols=len(df.columns)+5)
+        try:
+            wks = sh.worksheet(WORKSHEET_NAME)
+        except:
+            wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+20, cols=len(df.columns)+5)
         
+        # Clear and update
         wks.clear()
-        # Convert all to string to ensure JSON serializability
+        # gspread requires data as list of lists, including headers
+        # Convert all to string to avoid JSON serialization errors with numpy types
         data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         wks.update(data)
         return True, f"✅ Successfully uploaded {len(df)} rows to '{WORKSHEET_NAME}'"
@@ -133,10 +181,13 @@ def upload_to_gsheet(df, sheet_url):
         return False, f"❌ Error: {str(e)}"
 
 def get_error_log_csv():
-    if 'error_log' not in st.session_state or len(st.session_state.error_log) == 0: return None
+    """Get error log as CSV string."""
+    if 'error_log' not in st.session_state or len(st.session_state.error_log) == 0:
+        return None
     return pd.DataFrame(st.session_state.error_log).to_csv(index=False)
 
 def clear_error_log():
+    """Clear the session error log."""
     st.session_state.error_log = []
 
 # ============================================
@@ -162,89 +213,157 @@ BACKHAUL_MEDIUM_THRESHOLD = 0.65
 # ============================================
 @st.cache_resource
 def load_city_normalization():
+    """
+    Load city normalization from CSV.
+    """
     norm_path = os.path.join(APP_DIR, 'model_export', 'city_normalization_with_regions.csv')
-    variant_to_canonical, variant_to_canonical_lower = {}, {}
-    variant_to_region, canonical_to_region, canonical_to_english = {}, {}, {}
+    
+    variant_to_canonical = {}
+    variant_to_canonical_lower = {}
+    variant_to_region = {}
+    canonical_to_region = {}
+    canonical_to_english = {} 
     
     if os.path.exists(norm_path):
         try:
             df = pd.read_csv(norm_path)
+            
+            # 1. First Pass: Build basic mappings
             for _, row in df.iterrows():
-                variant, canonical = str(row['variant']).strip(), str(row['canonical']).strip()
+                variant = str(row['variant']).strip()
+                canonical = str(row['canonical']).strip()
                 region = row['region'] if pd.notna(row.get('region')) else None
+
                 variant_to_canonical[variant] = canonical
-                v_lower = normalize_english_text(variant)
-                if v_lower: variant_to_canonical_lower[v_lower] = canonical
+                
+                variant_lower = normalize_english_text(variant)
+                if variant_lower:
+                    variant_to_canonical_lower[variant_lower] = canonical
+                
                 if region:
                     variant_to_region[variant] = region
-                    if canonical not in canonical_to_region: canonical_to_region[canonical] = region
+                    if canonical not in canonical_to_region:
+                        canonical_to_region[canonical] = region
             
+            # 2. Second Pass: Determine best English display name
             grouped = df.groupby('canonical')['variant'].apply(list)
             for canonical, variants in grouped.items():
                 english_name = None
                 ascii_variants = [v for v in variants if re.match(r'^[A-Za-z\s\-\(\)\.]+$', str(v))]
+                
                 if ascii_variants:
                     title_case = [v for v in ascii_variants if str(v)[0].isupper() and not str(v).isupper()]
                     english_name = title_case[0] if title_case else ascii_variants[0]
+                
                 canonical_to_english[canonical] = english_name if english_name else canonical
-        except Exception as e: st.error(f"Error loading normalization: {e}")
+
+        except Exception as e:
+            st.error(f"Error reading normalization file: {e}")
             
     return variant_to_canonical, variant_to_canonical_lower, variant_to_region, canonical_to_region, canonical_to_english
 
+# Load mappings
 CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN = load_city_normalization()
 CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 
 # ============================================
-# CITY & LOOKUP HELPERS
+# HELPER FUNCTIONS
 # ============================================
 def normalize_city(city_raw):
-    if pd.isna(city_raw) or city_raw == '': return None, False
+    """Normalize city name to standard Arabic canonical form."""
+    if pd.isna(city_raw) or city_raw == '':
+        return None, False
     city = str(city_raw).strip()
-    if city in CITY_TO_CANONICAL: return CITY_TO_CANONICAL[city], True
+    
+    if city in CITY_TO_CANONICAL:
+        return CITY_TO_CANONICAL[city], True
+    
     city_lower = normalize_english_text(city)
-    if city_lower and city_lower in CITY_TO_CANONICAL_LOWER: return CITY_TO_CANONICAL_LOWER[city_lower], True
-    if city in CITY_EN_TO_AR: return CITY_EN_TO_AR[city], True
+    if city_lower and city_lower in CITY_TO_CANONICAL_LOWER:
+        return CITY_TO_CANONICAL_LOWER[city_lower], True
+    
+    if city in CITY_EN_TO_AR:
+        return CITY_EN_TO_AR[city], True
+
     return city, False
 
 def get_city_region(city):
-    if city in CITY_TO_REGION: return CITY_TO_REGION[city]
-    if city in CANONICAL_TO_REGION: return CANONICAL_TO_REGION[city]
+    if city in CITY_TO_REGION:
+        return CITY_TO_REGION[city]
+    if city in CANONICAL_TO_REGION:
+        return CANONICAL_TO_REGION[city]
     canonical = CITY_TO_CANONICAL.get(city, city)
-    if canonical in CANONICAL_TO_REGION: return CANONICAL_TO_REGION[canonical]
+    if canonical in CANONICAL_TO_REGION:
+        return CANONICAL_TO_REGION[canonical]
     return None
 
 def to_english_city(city_ar):
-    if city_ar in CITY_AR_TO_EN: return CITY_AR_TO_EN[city_ar]
+    if city_ar in CITY_AR_TO_EN:
+        return CITY_AR_TO_EN[city_ar]
     norm, found = normalize_city(city_ar)
-    if found and norm in CITY_AR_TO_EN: return CITY_AR_TO_EN[norm]
+    if found and norm in CITY_AR_TO_EN:
+        return CITY_AR_TO_EN[norm]
     return city_ar
 
 def to_arabic_city(city_en):
-    if city_en in CITY_EN_TO_AR: return CITY_EN_TO_AR[city_en]
+    if city_en in CITY_EN_TO_AR:
+        return CITY_EN_TO_AR[city_en]
     norm, found = normalize_city(city_en)
     return norm if norm else city_en
 
 # ============================================
-# MAPPINGS
+# VEHICLE TYPE MAPPINGS
 # ============================================
-VEHICLE_TYPE_EN = {'تريلا فرش': 'Flatbed Trailer', 'تريلا ستائر': 'Curtain Trailer', 'تريلا مقفول': 'Closed Trailer', 'تريلا ثلاجة': 'Refrigerated Trailer', 'Lowbed Trailer': 'Lowbed Trailer', 'Unknown': 'Unknown'}
+VEHICLE_TYPE_EN = {
+    'تريلا فرش': 'Flatbed Trailer',
+    'تريلا ستائر': 'Curtain Trailer',
+    'تريلا مقفول': 'Closed Trailer',
+    'تريلا ثلاجة': 'Refrigerated Trailer',
+    'Lowbed Trailer': 'Lowbed Trailer',
+    'Unknown': 'Unknown',
+}
 VEHICLE_TYPE_AR = {v: k for k, v in VEHICLE_TYPE_EN.items()}
 DEFAULT_VEHICLE_AR = 'تريلا فرش'
 DEFAULT_VEHICLE_EN = 'Flatbed Trailer'
-def to_english_vehicle(v): return VEHICLE_TYPE_EN.get(v, v)
-def to_arabic_vehicle(v): return VEHICLE_TYPE_AR.get(v, v) if v in VEHICLE_TYPE_AR else (v if v in VEHICLE_TYPE_EN else DEFAULT_VEHICLE_AR)
 
-COMMODITY_EN = {'Unknown': 'Unknown', 'أكسيد الحديد': 'Iron Oxide', 'أكياس ورقية فارغة': 'Empty Paper Bags', 'أنابيب': 'Pipes', 'اجهزه كهربائيه': 'Electrical Equipment', 'ارز': 'Rice', 'اسمدة': 'Fertilizer', 'الطرود': 'Parcels', 'براميل': 'Barrels', 'بلاستيك': 'Plastic', 'تمر': 'Dates', 'جبس': 'Gypsum', 'خردة': 'Scrap', 'خشب': 'Wood', 'رمل': 'Sand', 'رمل السيليكا': 'Silica Sand', 'زجاج ليفي': 'Fiberglass', 'زيوت': 'Oils', 'سكر': 'Sugar', 'سلع إستهلاكية': 'Consumer Goods', 'سيراميك': 'Ceramics', 'فحم': 'Coal', 'فوارغ': 'Empties', 'كابلات': 'Cables', 'كيماوي': 'Chemicals', 'لفات حديد': 'Steel Coils', 'معدات': 'Equipment', 'منتجات الصلب': 'Steel Products', 'مواد بناء': 'Building Materials', 'مياه': 'Water', 'ورق': 'Paper'}
-COMMODITY_AR = {v: k for k, v in COMMODITY_EN.items()}
-def to_english_commodity(c): return COMMODITY_EN.get(c, c)
-def to_arabic_commodity(c): return COMMODITY_AR.get(c, c)
+def to_english_vehicle(vtype_ar):
+    return VEHICLE_TYPE_EN.get(vtype_ar, vtype_ar)
+
+def to_arabic_vehicle(vtype_en):
+    if vtype_en in VEHICLE_TYPE_AR:
+        return VEHICLE_TYPE_AR[vtype_en]
+    if vtype_en in VEHICLE_TYPE_EN:
+        return vtype_en
+    return DEFAULT_VEHICLE_AR
 
 # ============================================
-# MODELS
+# COMMODITY TRANSLATIONS
+# ============================================
+COMMODITY_EN = {
+    'Unknown': 'Unknown', 'أكسيد الحديد': 'Iron Oxide', 'أكياس ورقية فارغة': 'Empty Paper Bags', 'أنابيب': 'Pipes',
+    'اجهزه كهربائيه': 'Electrical Equipment', 'ارز': 'Rice', 'اسمدة': 'Fertilizer', 'الطرود': 'Parcels',
+    'براميل': 'Barrels', 'بلاستيك': 'Plastic', 'تمر': 'Dates', 'جبس': 'Gypsum', 'خردة': 'Scrap', 'خشب': 'Wood',
+    'رمل': 'Sand', 'رمل السيليكا': 'Silica Sand', 'زجاج ليفي': 'Fiberglass', 'زيوت': 'Oils', 'سكر': 'Sugar',
+    'سلع إستهلاكية': 'Consumer Goods', 'سيراميك': 'Ceramics', 'فحم': 'Coal', 'فوارغ': 'Empties', 'كابلات': 'Cables',
+    'كيماوي': 'Chemicals', 'لفات حديد': 'Steel Coils', 'معدات': 'Equipment', 'منتجات الصلب': 'Steel Products',
+    'مواد بناء': 'Building Materials', 'مياه': 'Water', 'ورق': 'Paper',
+}
+COMMODITY_AR = {v: k for k, v in COMMODITY_EN.items()}
+
+def to_english_commodity(commodity_ar):
+    return COMMODITY_EN.get(commodity_ar, commodity_ar)
+
+def to_arabic_commodity(commodity_en):
+    return COMMODITY_AR.get(commodity_en, commodity_en)
+
+# ============================================
+# INDEX + SHRINKAGE MODEL
 # ============================================
 class IndexShrinkagePredictor:
-    def __init__(self, m):
-        self.m = m
+    """Index + Shrinkage model for lanes with some historical data."""
+    
+    def __init__(self, model_artifacts):
+        m = model_artifacts
         self.current_index = m['current_index']
         self.lane_multipliers = m['lane_multipliers']
         self.global_mean = m['global_mean']
@@ -252,49 +371,105 @@ class IndexShrinkagePredictor:
         self.pickup_priors = m['pickup_priors']
         self.dest_priors = m['dest_priors']
         self.lane_stats = m['lane_stats']
+        self.city_to_region = m.get('city_to_region', {})
         self.regional_cpk = {tuple(k.split('|')): v for k, v in m.get('regional_cpk', {}).items()} if isinstance(list(m.get('regional_cpk', {}).keys())[0] if m.get('regional_cpk') else '', str) else m.get('regional_cpk', {})
-
+        self.model_date = m.get('model_date', 'Unknown')
+    
     def get_canonical_lane(self, lane):
         parts = lane.split(' → ')
         if len(parts) == 2:
-            p = CITY_TO_CANONICAL.get(parts[0]) or CITY_TO_CANONICAL_LOWER.get(normalize_english_text(parts[0]), parts[0])
-            d = CITY_TO_CANONICAL.get(parts[1]) or CITY_TO_CANONICAL_LOWER.get(normalize_english_text(parts[1]), parts[1])
-            return f"{p} → {d}"
+            pickup = parts[0]
+            dest = parts[1]
+            p_can = CITY_TO_CANONICAL.get(pickup) or CITY_TO_CANONICAL_LOWER.get(normalize_english_text(pickup), pickup)
+            d_can = CITY_TO_CANONICAL.get(dest) or CITY_TO_CANONICAL_LOWER.get(normalize_english_text(dest), dest)
+            return f"{p_can} → {d_can}"
         return lane
-
+    
     def has_lane_data(self, lane):
-        if lane in self.lane_stats or lane in self.lane_multipliers: return True
-        canonical = self.get_canonical_lane(lane)
-        return canonical in self.lane_stats or canonical in self.lane_multipliers
-
-    def predict(self, pickup, dest, distance=None):
-        lane = f"{pickup} → {dest}"
-        lookup_lane = self.get_canonical_lane(lane) if not (lane in self.lane_stats or lane in self.lane_multipliers) else lane
+        if lane in self.lane_stats or lane in self.lane_multipliers:
+            return True
+        canonical_lane = self.get_canonical_lane(lane)
+        return canonical_lane in self.lane_stats or canonical_lane in self.lane_multipliers
+    
+    def predict(self, pickup_city, dest_city, distance_km=None):
+        lane = f"{pickup_city} → {dest_city}"
         
-        idx_pred = self.current_index * self.lane_multipliers[lookup_lane] if lookup_lane in self.lane_multipliers else None
+        # Try canonical lane if original doesn't exist
+        canonical_lane = self.get_canonical_lane(lane)
+        lookup_lane = canonical_lane if (canonical_lane in self.lane_stats or canonical_lane in self.lane_multipliers) else lane
         
-        p_prior = self.pickup_priors.get(pickup) or self.pickup_priors.get(CITY_TO_CANONICAL.get(pickup), self.global_mean)
-        d_prior = self.dest_priors.get(dest) or self.dest_priors.get(CITY_TO_CANONICAL.get(dest), self.global_mean)
+        # Predict Index
+        idx_pred = None
+        if lookup_lane in self.lane_multipliers:
+            idx_pred = self.current_index * self.lane_multipliers[lookup_lane]
+        
+        # Predict Shrinkage
+        p_prior = self.pickup_priors.get(pickup_city)
+        if p_prior is None:
+            pickup_canonical = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
+            p_prior = self.pickup_priors.get(pickup_canonical, self.global_mean)
+        
+        d_prior = self.dest_priors.get(dest_city)
+        if d_prior is None:
+            dest_canonical = CITY_TO_CANONICAL.get(dest_city, dest_city)
+            d_prior = self.dest_priors.get(dest_canonical, self.global_mean)
+        
         city_prior = (p_prior + d_prior) / 2
         
-        stats = self.lane_stats.get(lane) or self.lane_stats.get(lookup_lane)
+        if lane in self.lane_stats:
+            stats = self.lane_stats[lane]
+        else:
+            stats = self.lane_stats.get(lookup_lane)
+            
         if stats:
-            lam = stats['lane_n'] / (stats['lane_n'] + self.k)
-            shrink_pred = lam * stats['lane_mean'] + (1 - lam) * city_prior
+            lane_mean = stats['lane_mean']
+            lane_n = stats['lane_n']
+            lam = lane_n / (lane_n + self.k)
+            shrink_pred = lam * lane_mean + (1 - lam) * city_prior
         else:
             shrink_pred = city_prior
             
+        # Combine
         if idx_pred is not None:
-            pred, method, conf = (idx_pred + shrink_pred)/2, 'Index + Shrinkage', 'High' if stats and stats['lane_n']>=20 else 'Low'
+            predicted_cpk = (idx_pred + shrink_pred) / 2
+            method = 'Index + Shrinkage'
+            if stats:
+                n = stats['lane_n']
+                confidence = 'High' if n >= 20 else 'Medium' if n >= 5 else 'Low'
+            else:
+                confidence = 'Low'
         else:
-            pred, method, conf = shrink_pred, 'Shrinkage', 'Medium'
+            predicted_cpk = shrink_pred
+            method = 'Shrinkage'
+            confidence = 'Medium'
             
-        err = ERROR_BARS.get(conf, 0.25)
-        res = {'predicted_cost': round(pred * distance, 0) if distance else None, 'method': method, 'confidence': conf, 'predicted_cpk': pred, 'cost_high': round(pred*(1+err)*distance,0) if distance else None}
-        return res
+        error_pct = ERROR_BARS.get(confidence, 0.25)
+        price_low = predicted_cpk * (1 - error_pct)
+        price_high = predicted_cpk * (1 + error_pct)
+        
+        result = {
+            'predicted_cpk': round(predicted_cpk, 3),
+            'cpk_low': round(price_low, 3),
+            'cpk_high': round(price_high, 3),
+            'method': method,
+            'confidence': confidence,
+        }
+        
+        if distance_km and distance_km > 0:
+            result['predicted_cost'] = round(predicted_cpk * distance_km, 0)
+            result['cost_low'] = round(price_low * distance_km, 0)
+            result['cost_high'] = round(price_high * distance_km, 0)
+        
+        return result
 
+# ============================================
+# BLEND MODEL
+# ============================================
 class BlendPredictor:
-    def __init__(self, m):
+    """Blend model (0.7 Regional + 0.3 City) for completely new lanes."""
+    
+    def __init__(self, model_artifacts):
+        m = model_artifacts
         self.config = m['config']
         self.regional_weight = self.config.get('regional_weight', 0.7)
         self.current_index = m['current_index']
@@ -302,57 +477,118 @@ class BlendPredictor:
         self.dest_city_mult = m['dest_city_mult']
         self.city_to_region = m['city_to_region']
         self.regional_cpk = m['regional_cpk']
-
-    def predict(self, pickup, dest, distance=None):
-        p_can = CITY_TO_CANONICAL.get(pickup, pickup)
-        d_can = CITY_TO_CANONICAL.get(dest, dest)
+        self.model_date = self.config.get('training_date', 'Unknown')
+    
+    def predict(self, pickup_city, dest_city, distance_km=None):
+        # Get regions
+        p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
+        d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
+        
         p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can)
         d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can)
         
-        reg_cpk = self.regional_cpk.get((p_region, d_region)) if p_region and d_region else None
+        # Fallback if no region found
+        if not p_region:
+            p_region = CANONICAL_TO_REGION.get(p_can)
+        if not d_region:
+            d_region = CANONICAL_TO_REGION.get(d_can)
         
-        p_mult = self.pickup_city_mult.get(pickup, self.pickup_city_mult.get(p_can, 1.0))
-        d_mult = self.dest_city_mult.get(dest, self.dest_city_mult.get(d_can, 1.0))
+        regional_cpk = None
+        if p_region and d_region:
+            regional_cpk = self.regional_cpk.get((p_region, d_region))
+        
+        # City Multipliers
+        p_mult = self.pickup_city_mult.get(pickup_city, self.pickup_city_mult.get(p_can, 1.0))
+        d_mult = self.dest_city_mult.get(dest_city, self.dest_city_mult.get(d_can, 1.0))
         city_cpk = p_mult * d_mult * self.current_index
         
-        if reg_cpk:
-            pred = self.regional_weight * reg_cpk + (1-self.regional_weight) * city_cpk
+        if regional_cpk is not None:
+            predicted_cpk = self.regional_weight * regional_cpk + (1 - self.regional_weight) * city_cpk
             method = f'Blend ({self.regional_weight:.0%} Regional)'
+            confidence = 'Low'
         else:
-            pred = city_cpk
+            predicted_cpk = city_cpk
             method = 'City Multipliers'
+            confidence = 'Very Low'
             
-        err = ERROR_BARS.get('Low', 0.25)
-        res = {'predicted_cost': round(pred * distance, 0) if distance else None, 'method': method, 'confidence': 'Low', 'predicted_cpk': pred, 'cost_high': round(pred*(1+err)*distance,0) if distance else None}
-        return res
+        error_pct = ERROR_BARS.get(confidence, 0.25)
+        price_low = predicted_cpk * (1 - error_pct)
+        price_high = predicted_cpk * (1 + error_pct)
+        
+        result = {
+            'predicted_cpk': round(predicted_cpk, 3),
+            'cpk_low': round(price_low, 3),
+            'cpk_high': round(price_high, 3),
+            'method': method,
+            'confidence': confidence,
+        }
+        
+        if distance_km and distance_km > 0:
+            result['predicted_cost'] = round(predicted_cpk * distance_km, 0)
+            result['cost_low'] = round(price_low * distance_km, 0)
+            result['cost_high'] = round(price_high * distance_km, 0)
+        
+        return result
 
+# ============================================
+# LOAD MODELS
+# ============================================
 @st.cache_resource
 def load_models():
     MODEL_DIR = os.path.join(APP_DIR, 'model_export')
     
     carrier_model = None
-    if os.path.exists(os.path.join(MODEL_DIR, 'carrier_model.cbm')):
+    json_path = os.path.join(MODEL_DIR, 'carrier_model.json')
+    cbm_path = os.path.join(MODEL_DIR, 'carrier_model.cbm')
+    if os.path.exists(json_path):
         carrier_model = CatBoostRegressor()
-        carrier_model.load_model(os.path.join(MODEL_DIR, 'carrier_model.cbm'))
+        carrier_model.load_model(json_path, format='json')
+    elif os.path.exists(cbm_path):
+        carrier_model = CatBoostRegressor()
+        carrier_model.load_model(cbm_path)
     
-    config = {}
-    if os.path.exists(os.path.join(MODEL_DIR, 'config.pkl')):
-        with open(os.path.join(MODEL_DIR, 'config.pkl'), 'rb') as f: config = pickle.load(f)
+    with open(os.path.join(MODEL_DIR, 'config.pkl'), 'rb') as f:
+        config = pickle.load(f)
     
-    df_knn = pd.DataFrame()
-    if os.path.exists(os.path.join(MODEL_DIR, 'reference_data.csv')): df_knn = pd.read_csv(os.path.join(MODEL_DIR, 'reference_data.csv'))
+    csv_path = os.path.join(MODEL_DIR, 'reference_data.csv')
+    parquet_path = os.path.join(MODEL_DIR, 'reference_data.parquet')
+    if os.path.exists(csv_path):
+        df_knn = pd.read_csv(csv_path)
+    else:
+        df_knn = pd.read_parquet(parquet_path)
     
-    distance_matrix = {}
-    if os.path.exists(os.path.join(MODEL_DIR, 'distance_matrix.pkl')):
-        with open(os.path.join(MODEL_DIR, 'distance_matrix.pkl'), 'rb') as f: distance_matrix = pickle.load(f)
+    # Load distance matrix
+    distance_matrix_path = os.path.join(MODEL_DIR, 'distance_matrix.pkl')
+    if os.path.exists(distance_matrix_path):
+        with open(distance_matrix_path, 'rb') as f:
+            distance_matrix = pickle.load(f)
+    else:
+        distance_matrix = {}
     
-    index_shrink, blend = None, None
-    if os.path.exists(os.path.join(MODEL_DIR, 'rare_lane_models.pkl')):
-        with open(os.path.join(MODEL_DIR, 'rare_lane_models.pkl'), 'rb') as f: index_shrink = IndexShrinkagePredictor(pickle.load(f))
-    if os.path.exists(os.path.join(MODEL_DIR, 'new_lane_model_blend.pkl')):
-        with open(os.path.join(MODEL_DIR, 'new_lane_model_blend.pkl'), 'rb') as f: blend = BlendPredictor(pickle.load(f))
-        
-    return {'carrier_model': carrier_model, 'config': config, 'df_knn': df_knn, 'distance_matrix': distance_matrix, 'index_shrink_predictor': index_shrink, 'blend_predictor': blend}
+    # Load Index + Shrinkage model
+    rare_lane_path = os.path.join(MODEL_DIR, 'rare_lane_models.pkl')
+    index_shrink_predictor = None
+    if os.path.exists(rare_lane_path):
+        with open(rare_lane_path, 'rb') as f:
+            rare_lane_artifacts = pickle.load(f)
+        index_shrink_predictor = IndexShrinkagePredictor(rare_lane_artifacts)
+    
+    # Load Blend model
+    blend_path = os.path.join(MODEL_DIR, 'new_lane_model_blend.pkl')
+    blend_predictor = None
+    if os.path.exists(blend_path):
+        with open(blend_path, 'rb') as f:
+            blend_artifacts = pickle.load(f)
+        blend_predictor = BlendPredictor(blend_artifacts)
+    
+    return {
+        'carrier_model': carrier_model,
+        'config': config,
+        'df_knn': df_knn,
+        'distance_matrix': distance_matrix,
+        'index_shrink_predictor': index_shrink_predictor,
+        'blend_predictor': blend_predictor
+    }
 
 models = load_models()
 config = models['config']
@@ -361,11 +597,15 @@ DISTANCE_MATRIX = models['distance_matrix']
 index_shrink_predictor = models['index_shrink_predictor']
 blend_predictor = models['blend_predictor']
 
-if 'entity_mapping' in df_knn.columns: df_knn = df_knn[df_knn['entity_mapping'] == config.get('ENTITY_MAPPING', 'Domestic')].copy()
+FEATURES = config['FEATURES']
+ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
 DISTANCE_LOOKUP = config.get('DISTANCE_LOOKUP', {})
 
+df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
+VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_city'].unique())
+
 # ============================================
-# DROPDOWN & DATA SETUP
+# DROPDOWN SETUP
 # ============================================
 all_canonicals = sorted(list(set(CITY_TO_CANONICAL.values())))
 pickup_cities_en = sorted(list(set([to_english_city(c) for c in all_canonicals])))
@@ -421,6 +661,7 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     p_can, d_can = CITY_TO_CANONICAL.get(pickup_ar, pickup_ar), CITY_TO_CANONICAL.get(dest_ar, dest_ar)
     
     if lane_data is not None and len(lane_data[lane_data['distance'] > 0]) > 0: return lane_data[lane_data['distance'] > 0]['distance'].median(), 'Historical'
+    
     rev_data = df_knn[df_knn['lane'] == rev_lane]
     if len(rev_data[rev_data['distance'] > 0]) > 0: return rev_data[rev_data['distance'] > 0]['distance'].median(), 'Historical (reverse)'
     
@@ -432,6 +673,7 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     if (dest_ar, pickup_ar) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(dest_ar, pickup_ar)], 'Matrix (reverse)'
     if (d_can, p_can) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(d_can, p_can)], 'Matrix (canonical reverse)'
     
+    log_exception('missing_distance', {'pickup': pickup_ar, 'dest': dest_ar})
     return 0, 'Missing'
 
 def round_to_nearest(value, nearest):
@@ -506,14 +748,19 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         if len(lane_data[lane_data['commodity'] == commodity]) > 0: lane_data = lane_data[lane_data['commodity'] == commodity]
     
     rec_data = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]
-    def get_stats(d, col): return (round(d[col].min(),0), round(d[col].median(),0), round(d[col].max(),0), len(d)) if len(d) > 0 else (None,None,None,0)
+    
+    def get_stats(d, col):
+        if len(d) == 0: return None, None, None, 0
+        return round(d[col].min(),0), round(d[col].median(),0), round(d[col].max(),0), len(d)
     
     h_min, h_med, h_max, h_count = get_stats(lane_data, 'total_carrier_price')
     r_min, r_med, r_max, r_count = get_stats(rec_data, 'total_carrier_price')
     hs_min, hs_med, hs_max, _ = get_stats(lane_data, 'total_shipper_price')
     rs_min, rs_med, rs_max, _ = get_stats(rec_data, 'total_shipper_price')
     
-    if not commodity or commodity in ['', 'Auto']: commodity = lane_data['commodity'].mode().iloc[0] if len(lane_data) > 0 else df_knn['commodity'].mode().iloc[0]
+    if not commodity or commodity in ['', 'Auto']:
+        commodity = lane_data['commodity'].mode().iloc[0] if len(lane_data) > 0 else df_knn['commodity'].mode().iloc[0]
+    
     if not weight:
         w = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
         weight = w.median() if len(w) > 0 else 25.0
@@ -689,6 +936,18 @@ with tab1:
 
 with tab2:
     st.subheader("📦 Bulk Route Lookup")
+    
+    st.markdown(f"""
+    **Upload a CSV to get pricing for each route.**
+    
+    **Required:** `From`, `To`  
+    **Optional:** `Vehicle_Type` (default: Flatbed Trailer)
+    
+    **Output columns:**
+    - Distance, Buy Price (rounded to 100), Sell Price (rounded to 50)
+    - Target Margin, Backhaul Probability
+    - Model Used, Confidence, Recent Count
+    """)
     st.download_button("📥 Template", pd.DataFrame({'From':['Jeddah','Riyadh'], 'To':['Riyadh','Dammam'], 'Vehicle_Type':['Flatbed Trailer','']}).to_csv(index=False), "template.csv", "text/csv")
     
     upl = st.file_uploader("Upload CSV", type=['csv'])
@@ -721,6 +980,15 @@ with tab2:
         res_df = st.session_state.bulk_results
         st.markdown("---")
         st.subheader("📊 Results")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.metric("Routes", len(res_df))
+        with c2: st.metric("Recent Data", (res_df['Model'] == 'Recency').sum())
+        with c3: st.metric("Model Est.", res_df['Model'].str.contains('Index|Shrink|Blend', na=False).sum())
+        with c4: st.metric("High Conf.", (res_df['Confidence'] == 'High').sum())
+        
+        st.caption("""**Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference | Rental_Cost = 800 SAR/day × days (rounded)""")
+        
         st.dataframe(res_df, use_container_width=True, hide_index=True)
         st.download_button("📥 Download Results", res_df.to_csv(index=False), "results.csv", "text/csv", type="primary")
         

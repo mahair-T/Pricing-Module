@@ -19,7 +19,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # ============================================
 # 🔧 CONFIGURATION
 # ============================================
-# PASTE YOUR GOOGLE SHEET URL BELOW
+# UPDATED MASTER GRID SHEET URL
 BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/1u4qyqE626mor0OV1JHYO2Ejd5chmPy3wi1P0AWdhLPw/edit"
 
 def normalize_english_text(text):
@@ -32,7 +32,7 @@ def normalize_english_text(text):
     return text
 
 # ============================================
-# ERROR LOGGING & GSHEET HELPERS
+# GOOGLE SHEETS CONNECTION & LOGGING
 # ============================================
 def get_gsheet_client():
     """Get Google Sheets client using Streamlit secrets."""
@@ -59,7 +59,7 @@ def get_gsheet_client():
 
 @st.cache_resource
 def get_error_sheet():
-    """Get or create the error log sheet."""
+    """Get or create the error log sheet (Cached Connection)."""
     try:
         client = get_gsheet_client()
         if client is None:
@@ -77,6 +77,27 @@ def get_error_sheet():
             worksheet = spreadsheet.add_worksheet(title='ErrorLog', rows=1000, cols=10)
             worksheet.update('A1:G1', [['Timestamp', 'Type', 'Pickup_City', 'Destination_City', 'Pickup_EN', 'Destination_EN', 'Details']])
         
+        return worksheet
+    except Exception as e:
+        return None
+
+@st.cache_resource
+def get_bulk_sheet():
+    """Get or create the bulk export sheet (Cached Connection - Matches Error Log Method)."""
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        # Use the constant URL configured at the top
+        spreadsheet = client.open_by_url(BULK_PRICING_SHEET_URL)
+        
+        WORKSHEET_NAME = "Bulk_Pricing_Export"
+        try:
+            worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+        except:
+            worksheet = spreadsheet.add_worksheet(title=WORKSHEET_NAME, rows=5000, cols=20)
+            
         return worksheet
     except Exception as e:
         return None
@@ -154,51 +175,35 @@ def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distan
         pass
     return False
 
-def upload_to_gsheet(df, sheet_url):
+def upload_to_gsheet(df):
     """
-    Upload dataframe to Google Sheet. 
-    Mirrors the logic of get_error_sheet() for consistency.
+    Upload dataframe to the Master Grid Google Sheet.
+    Uses the cached get_bulk_sheet() for stability.
     """
-    if "YOUR_SHEET_ID_HERE" in sheet_url:
-        return False, "❌ Please configure the BULK_PRICING_SHEET_URL in the script code."
+    if "YOUR_SHEET_ID_HERE" in BULK_PRICING_SHEET_URL:
+        return False, "❌ URL Not Configured. Update BULK_PRICING_SHEET_URL."
 
     try:
-        # 1. Get Client (Same as error logger)
-        client = get_gsheet_client()
-        if not client: 
-            return False, "❌ Google Cloud credentials not found in Secrets."
+        wks = get_bulk_sheet()
+        if not wks:
+            return False, "❌ Access Denied or Connection Failed. Check Secrets/Sharing."
         
-        # 2. Open Sheet
-        try:
-            sh = client.open_by_url(sheet_url)
-        except Exception as e:
-            return False, f"❌ Access Denied: {str(e)}"
-        
-        # 3. Get/Create Worksheet (Same pattern as error logger)
-        WORKSHEET_NAME = "Bulk_Pricing_Export"
-        try:
-            wks = sh.worksheet(WORKSHEET_NAME)
-        except:
-            wks = sh.add_worksheet(WORKSHEET_NAME, rows=len(df)+20, cols=len(df.columns)+5)
-        
-        # 4. Prepare Data
+        # Clear existing content
         wks.clear()
-        # Convert all to string to allow JSON serialization of numpy types
+        
+        # Prepare data (Convert to string to avoid JSON errors)
         data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         
-        # 5. Write Data
-        # We try 'update("A1", data)' first because log_exception uses 'update("A1:G1", ...)'
-        # which implies your environment supports range strings.
+        # Robust write: Try legacy method first (often more stable for simple range writes), then newer
         try:
             wks.update('A1', data)
-        except Exception:
-            # Fallback for different gspread versions
+        except:
             try:
                 wks.update(data)
-            except Exception as e_inner:
-                return False, f"❌ Write Failed: {str(e_inner)}"
+            except Exception as e:
+                return False, f"❌ Write Failed: {str(e)}"
                 
-        return True, f"✅ Successfully uploaded {len(df)} rows to '{WORKSHEET_NAME}'"
+        return True, f"✅ Successfully uploaded {len(df)} rows to Master Grid."
         
     except Exception as e:
         return False, f"❌ Unexpected Error: {str(e)}"
@@ -265,7 +270,6 @@ def load_city_normalization():
                     if canonical not in canonical_to_region:
                         canonical_to_region[canonical] = region
             
-            # Determine best English display name
             grouped = df.groupby('canonical')['variant'].apply(list)
             for canonical, variants in grouped.items():
                 english_name = None
@@ -681,7 +685,6 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     p_can, d_can = CITY_TO_CANONICAL.get(pickup_ar, pickup_ar), CITY_TO_CANONICAL.get(dest_ar, dest_ar)
     
     if lane_data is not None and len(lane_data[lane_data['distance'] > 0]) > 0: return lane_data[lane_data['distance'] > 0]['distance'].median(), 'Historical'
-    
     rev_data = df_knn[df_knn['lane'] == rev_lane]
     if len(rev_data[rev_data['distance'] > 0]) > 0: return rev_data[rev_data['distance'] > 0]['distance'].median(), 'Historical (reverse)'
     
@@ -1000,15 +1003,6 @@ with tab2:
         res_df = st.session_state.bulk_results
         st.markdown("---")
         st.subheader("📊 Results")
-        
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Routes", len(res_df))
-        with c2: st.metric("Recent Data", (res_df['Model'] == 'Recency').sum())
-        with c3: st.metric("Model Est.", res_df['Model'].str.contains('Index|Shrink|Blend', na=False).sum())
-        with c4: st.metric("High Conf.", (res_df['Confidence'] == 'High').sum())
-        
-        st.caption("""**Columns:** Buy_Price = Carrier cost | Rec_Sell = Buy + Margin | Ref_Sell = Market reference | Rental_Cost = 800 SAR/day × days (rounded)""")
-        
         st.dataframe(res_df, use_container_width=True, hide_index=True)
         st.download_button("📥 Download Results", res_df.to_csv(index=False), "results.csv", "text/csv", type="primary")
         
@@ -1017,7 +1011,7 @@ with tab2:
         st.caption(f"Target Sheet: `{BULK_PRICING_SHEET_URL}`")
         if st.button("☁️ Upload Results to Google Sheet"):
             with st.spinner("Uploading..."):
-                ok, msg = upload_to_gsheet(res_df, BULK_PRICING_SHEET_URL)
+                ok, msg = upload_to_gsheet(res_df)
                 if ok: st.success(msg)
                 else: st.error(msg)
 
@@ -1044,7 +1038,7 @@ with tab2:
                 st.success(f"Generated {len(master_df)} routes.")
                 
                 # Auto-upload
-                ok, msg = upload_to_gsheet(master_df, BULK_PRICING_SHEET_URL)
+                ok, msg = upload_to_gsheet(master_df)
                 if ok: st.success(msg)
                 else: st.error(msg)
 

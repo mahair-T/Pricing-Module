@@ -155,10 +155,23 @@ def get_bulk_sheet():
         st.error(f"Google Sheets connection error: {str(e)}")
         return None
 
-def log_exception(exception_type, details):
-    """Log exception to Google Sheets."""
+def log_exception(exception_type, details, immediate=False):
+    """
+    Log exception to session state (and optionally to Google Sheets immediately).
+    
+    By default, errors are queued locally and should be flushed at the end of 
+    bulk operations using flush_error_log_to_sheet().
+    
+    Args:
+        exception_type: Type of error (e.g., 'unmatched_city', 'missing_distance')
+        details: Dict with error details
+        immediate: If True, write to Google Sheet immediately (for single operations)
+    """
     if 'error_log' not in st.session_state:
         st.session_state.error_log = []
+    
+    if 'error_log_pending' not in st.session_state:
+        st.session_state.error_log_pending = []
     
     log_entry = {
         'timestamp': datetime.now().isoformat(),
@@ -167,21 +180,62 @@ def log_exception(exception_type, details):
     }
     st.session_state.error_log.append(log_entry)
     
+    # Build the row for Google Sheets
+    row = [
+        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        exception_type,
+        details.get('pickup_city', details.get('original_value', '')),
+        details.get('destination_city', details.get('normalized_to', '')),
+        details.get('pickup_en', ''),
+        details.get('destination_en', ''),
+        str(details)
+    ]
+    
+    if immediate:
+        # Write immediately (for single route operations)
+        try:
+            worksheet = get_error_sheet()
+            if worksheet:
+                worksheet.append_row(row)
+        except Exception as e:
+            pass
+    else:
+        # Queue for batch write
+        st.session_state.error_log_pending.append(row)
+
+def flush_error_log_to_sheet(batch_size=500):
+    """
+    Flush pending error logs to Google Sheets in batches.
+    Call this periodically during bulk operations to avoid accumulating too many.
+    
+    Args:
+        batch_size: Max number of errors to write per API call (default 500)
+    
+    Returns: (success, count) tuple
+    """
+    if 'error_log_pending' not in st.session_state or len(st.session_state.error_log_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.error_log_pending
+    total_count = len(pending)
+    
     try:
         worksheet = get_error_sheet()
         if worksheet:
-            row = [
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                exception_type,
-                details.get('pickup_city', details.get('original_value', '')),
-                details.get('destination_city', details.get('normalized_to', '')),
-                details.get('pickup_en', ''),
-                details.get('destination_en', ''),
-                str(details)
-            ]
-            worksheet.append_row(row)
+            # Write in batches of batch_size
+            written = 0
+            for i in range(0, total_count, batch_size):
+                batch = pending[i:i + batch_size]
+                worksheet.append_rows(batch)
+                written += len(batch)
+            
+            st.session_state.error_log_pending = []
+            return True, written
     except Exception as e:
-        pass
+        # Keep pending for retry
+        return False, 0
+    
+    return True, 0
 
 def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distance, issue_type, user_notes=''):
     """Report a distance issue to the Reported sheet."""
@@ -1079,17 +1133,27 @@ with tab1:
          st.error("City list is empty. Check normalization file.")
          st.stop()
     with col1:
-        def_idx = pickup_cities_en.index('Jeddah') if 'Jeddah' in pickup_cities_en else 0
-        pickup_en = st.selectbox("Pickup City", options=pickup_cities_en, index=def_idx, key='single_pickup')
+        def_pickup_idx = pickup_cities_en.index('Jeddah') if 'Jeddah' in pickup_cities_en else 0
+        pickup_en = st.selectbox("Pickup City", options=pickup_cities_en, index=def_pickup_idx, key='single_pickup')
         pickup_city = to_arabic_city(pickup_en)
     with col2:
-        def_idx = dest_cities_en.index('Riyadh') if 'Riyadh' in dest_cities_en else 0
-        dest_en = st.selectbox("Destination City", options=dest_cities_en, index=def_idx, key='single_dest')
+        def_dest_idx = dest_cities_en.index('Riyadh') if 'Riyadh' in dest_cities_en else 0
+        dest_en = st.selectbox("Destination City", options=dest_cities_en, index=def_dest_idx, key='single_dest')
         destination_city = to_arabic_city(dest_en)
     with col3:
         def_idx = vehicle_types_en.index(DEFAULT_VEHICLE_EN) if DEFAULT_VEHICLE_EN in vehicle_types_en else 0
         vehicle_en = st.selectbox("Vehicle Type", options=vehicle_types_en, index=def_idx, key='single_vehicle')
         vehicle_type = to_arabic_vehicle(vehicle_en)
+    
+    # Swap button - directly swap the session state keys
+    if st.button("🔄 Swap Pickup ↔ Destination", key='swap_cities'):
+        # Get current values
+        current_pickup = st.session_state.get('single_pickup', pickup_en)
+        current_dest = st.session_state.get('single_dest', dest_en)
+        # Swap them
+        st.session_state.single_pickup = current_dest
+        st.session_state.single_dest = current_pickup
+        st.rerun()
 
     st.subheader("📦 Optional Details")
     col1, col2, col3 = st.columns(3)
@@ -1167,13 +1231,24 @@ with tab1:
             lane_ar = f"{pickup_city} → {destination_city}"
             same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, comm_in)
             
+            # Check if shipper/company column exists in data
+            has_shipper = 'shipper_name' in df_knn.columns or 'company' in df_knn.columns or 'client' in df_knn.columns
+            shipper_col = 'shipper_name' if 'shipper_name' in df_knn.columns else ('company' if 'company' in df_knn.columns else 'client')
+            
             commodity_used = to_english_commodity(comm_in) if comm_in else result['Commodity']
             if len(same_samples) > 0:
                 st.markdown(f"**Same Commodity ({commodity_used}):**")
                 same_samples['Lane_EN'] = same_samples['pickup_city'].apply(to_english_city) + ' → ' + same_samples['destination_city'].apply(to_english_city)
                 same_samples['Commodity_EN'] = same_samples['commodity'].apply(to_english_commodity)
-                display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
-                display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                
+                # Build columns list based on available data
+                if has_shipper and shipper_col in same_samples.columns:
+                    display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', shipper_col, 'total_carrier_price', 'days_ago']].copy()
+                    display_same.columns = ['Date', 'Lane', 'Commodity', 'Shipper', 'Carrier (SAR)', 'Days Ago']
+                else:
+                    display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                    display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                
                 display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
                 display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
                 st.dataframe(display_same, use_container_width=True, hide_index=True)
@@ -1184,8 +1259,15 @@ with tab1:
                 st.markdown("**Other Commodities:**")
                 other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
                 other_samples['Commodity_EN'] = other_samples['commodity'].apply(to_english_commodity)
-                display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
-                display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                
+                # Build columns list based on available data
+                if has_shipper and shipper_col in other_samples.columns:
+                    display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', shipper_col, 'total_carrier_price', 'days_ago']].copy()
+                    display_other.columns = ['Date', 'Lane', 'Commodity', 'Shipper', 'Carrier (SAR)', 'Days Ago']
+                else:
+                    display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                    display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                
                 display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
                 display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
                 st.dataframe(display_other, use_container_width=True, hide_index=True)
@@ -1254,6 +1336,11 @@ with tab2:
                 status_text.text("✅ Complete!")
                 st.session_state.bulk_results = pd.DataFrame(res)
                 st.session_state.bulk_unmatched = pd.DataFrame(unmat)
+                
+                # Flush any pending error logs to Google Sheets in one batch
+                flushed_ok, flushed_count = flush_error_log_to_sheet()
+                if flushed_count > 0:
+                    st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
         except Exception as e: st.error(f"Error: {e}")
 
     # Results Display (Outside indentation so it persists)
@@ -1304,7 +1391,12 @@ with tab2:
         
         if has_incomplete:
             prog = st.session_state.master_grid_progress
-            st.warning(f"⚠️ Previous run incomplete: {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded")
+            
+            # Show error message if there was one
+            if prog.get('error_message'):
+                st.error(f"❌ {prog['error_message']}")
+            
+            st.warning(f"⚠️ Previous run incomplete: {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded. You can resume from here.")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1361,8 +1453,6 @@ with tab2:
                 progress_bar = st.progress(rows_written / total_routes if total_routes > 0 else 0)
                 status_text = st.empty()
                 
-                error_occurred = False
-                
                 # Process in batches: generate → write → repeat
                 for i in range(start_index, total_routes, batch_size):
                     batch_combos = combos[i:i + batch_size]
@@ -1376,6 +1466,11 @@ with tab2:
                     
                     all_results.extend(batch_results)
                     
+                    # Check if we need to flush error logs (every 500 errors)
+                    pending_errors = len(st.session_state.get('error_log_pending', []))
+                    if pending_errors >= 500:
+                        flush_error_log_to_sheet(batch_size=500)
+                    
                     # Write this batch to sheet
                     status_text.text(f"Batch {batch_num}: Writing {len(batch_results)} rows to sheet...")
                     try:
@@ -1385,9 +1480,6 @@ with tab2:
                         wks.update(f'A{start_row}', data_rows)
                         rows_written += len(batch_results)
                     except Exception as e:
-                        st.error(f"❌ Failed at batch {batch_num}: {str(e)}")
-                        st.warning(f"Partial upload: {rows_written:,} rows written. You can resume from here.")
-                        
                         # Save state for resume
                         st.session_state.master_grid_progress = {
                             'incomplete': True,
@@ -1395,10 +1487,12 @@ with tab2:
                             'rows_written': rows_written,
                             'batch_num': batch_num,
                             'total_routes': total_routes,
-                            'all_results': all_results
+                            'all_results': all_results,
+                            'error_message': f"Failed at batch {batch_num}: {str(e)}"
                         }
-                        error_occurred = True
-                        break
+                        # Flush any pending errors before rerun
+                        flush_error_log_to_sheet(batch_size=500)
+                        st.rerun()
                     
                     # Update progress
                     progress_bar.progress(min(1.0, (i + len(batch_combos)) / total_routes))
@@ -1408,20 +1502,25 @@ with tab2:
                     if i + batch_size < total_routes:
                         time.sleep(0.3)
                 
-                if not error_occurred:
-                    # Add timestamp
-                    try:
-                        wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
-                    except:
-                        pass
-                    
-                    progress_bar.progress(1.0)
-                    st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
-                    status_text.empty()
-                    
-                    # Clear incomplete state
-                    if 'master_grid_progress' in st.session_state:
-                        del st.session_state.master_grid_progress
+                # If we get here, loop completed successfully (errors cause st.rerun())
+                # Add timestamp
+                try:
+                    wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+                except:
+                    pass
+                
+                progress_bar.progress(1.0)
+                st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
+                status_text.empty()
+                
+                # Clear incomplete state
+                if 'master_grid_progress' in st.session_state:
+                    del st.session_state.master_grid_progress
+                
+                # Flush any remaining pending error logs
+                flushed_ok, flushed_count = flush_error_log_to_sheet(batch_size=500)
+                if flushed_count > 0:
+                    st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
                 
                 # Store for download
                 st.session_state.master_grid_df = pd.DataFrame(all_results)

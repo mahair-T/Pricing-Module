@@ -932,6 +932,64 @@ def get_city_region(city):
         return CANONICAL_TO_REGION[canonical]
     return None
 
+def classify_unmatched_city(city_raw):
+    """
+    Classify why a city didn't match and determine the error type.
+    
+    Error Types:
+    1. 'no_region' - City exists in historical data (VALID_CITIES_AR) but not in CSV
+                    → Needs to be added to canonicals CSV with region
+    2. 'unknown_city' - City not in historical data AND not in CSV
+                       → Possibly a new city or typo/variant of existing city
+    3. 'empty' - Empty/null city name
+    
+    Returns dict with:
+        - error_type: 'no_region' | 'unknown_city' | 'empty'
+        - message: Human-readable explanation
+        - action: Suggested action to take
+        - in_historical_data: bool
+    """
+    if pd.isna(city_raw) or str(city_raw).strip() == '':
+        return {
+            'error_type': 'empty',
+            'message': 'Empty city name',
+            'action': 'Provide a valid city name',
+            'in_historical_data': False
+        }
+    
+    city = str(city_raw).strip()
+    
+    # Check if city exists in historical data (VALID_CITIES_AR)
+    in_historical = city in VALID_CITIES_AR
+    
+    # Check if city has a region defined
+    region = get_city_region(city)
+    
+    if in_historical and not region:
+        # City is in historical data but not in normalization CSV
+        return {
+            'error_type': 'no_region',
+            'message': f'City "{city}" exists in historical data but has no region defined',
+            'action': 'Add this city to the canonicals CSV with its region',
+            'in_historical_data': True
+        }
+    elif not in_historical:
+        # City not in historical data - unknown/new city or possible variant
+        return {
+            'error_type': 'unknown_city',
+            'message': f'City "{city}" not found in database',
+            'action': 'Check if this is a variant of an existing city, or add as new city to CSV',
+            'in_historical_data': False
+        }
+    
+    # Shouldn't reach here if normalize_city returned False, but just in case
+    return {
+        'error_type': 'unknown',
+        'message': f'City "{city}" - unknown issue',
+        'action': 'Investigate manually',
+        'in_historical_data': in_historical
+    }
+
 def to_english_city(city_ar):
     """Convert Arabic city name to English display name."""
     if city_ar in CITY_AR_TO_EN:
@@ -1270,6 +1328,24 @@ df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
 VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_city'].unique())
 
 # ============================================
+# STARTUP VALIDATION: Check for cities without regions
+# Cities in historical data but not in normalization CSV
+# ============================================
+def get_cities_without_regions():
+    """
+    Find cities that exist in historical data but have no region defined.
+    These need to be added to the city_normalization.csv file.
+    """
+    cities_without_region = []
+    for city in VALID_CITIES_AR:
+        region = get_city_region(city)
+        if not region:
+            cities_without_region.append(city)
+    return sorted(cities_without_region)
+
+CITIES_WITHOUT_REGIONS = get_cities_without_regions()
+
+# ============================================
 # DROPDOWN SETUP
 # ============================================
 all_canonicals = sorted(list(set(CITY_TO_CANONICAL.values())))
@@ -1601,6 +1677,17 @@ if blend_predictor: model_status.append("✅ Blend 0.7")
 dist_status = f"✅ {len(DISTANCE_MATRIX):,} distances" if DISTANCE_MATRIX else ""
 st.caption(f"ML-powered pricing | Domestic | {' | '.join(model_status)} | {dist_status}")
 
+# Warning for cities in historical data but not in normalization CSV
+if CITIES_WITHOUT_REGIONS:
+    with st.expander(f"⚠️ {len(CITIES_WITHOUT_REGIONS)} cities in historical data missing from canonicals CSV", expanded=False):
+        st.warning("""
+        **Action Required:** These cities exist in the historical trip data but are NOT in the city_normalization.csv file.
+        They need to be added with their canonical form and region.
+        """)
+        for city in CITIES_WITHOUT_REGIONS:
+            st.code(city)
+        st.info("Add these to city_normalization.csv with columns: variant, canonical, english, region")
+
 tab1, tab2 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup"])
 
 with tab1:
@@ -1883,11 +1970,39 @@ with tab2:
                     d_ar, d_ok = normalize_city(d_raw)
                     
                     if not p_ok: 
-                        unmat.append({'Row': i+1, 'Col': 'Pickup (Col 1)', 'Val': p_raw})
-                        log_exception('unmatched_city', {'row': i+1, 'column': 'Pickup', 'original_value': p_raw})
+                        classification = classify_unmatched_city(p_raw)
+                        unmat.append({
+                            'Row': i+1, 
+                            'Col': 'Pickup (Col 1)', 
+                            'Val': p_raw,
+                            'Error': classification['error_type'],
+                            'Action': classification['action']
+                        })
+                        log_exception(classification['error_type'], {
+                            'row': i+1, 
+                            'column': 'Pickup', 
+                            'original_value': p_raw,
+                            'message': classification['message'],
+                            'action': classification['action'],
+                            'in_historical_data': classification['in_historical_data']
+                        })
                     if not d_ok: 
-                        unmat.append({'Row': i+1, 'Col': 'Destination (Col 2)', 'Val': d_raw})
-                        log_exception('unmatched_city', {'row': i+1, 'column': 'Destination', 'original_value': d_raw})
+                        classification = classify_unmatched_city(d_raw)
+                        unmat.append({
+                            'Row': i+1, 
+                            'Col': 'Destination (Col 2)', 
+                            'Val': d_raw,
+                            'Error': classification['error_type'],
+                            'Action': classification['action']
+                        })
+                        log_exception(classification['error_type'], {
+                            'row': i+1, 
+                            'column': 'Destination', 
+                            'original_value': d_raw,
+                            'message': classification['message'],
+                            'action': classification['action'],
+                            'in_historical_data': classification['in_historical_data']
+                        })
                     
                     v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
                     

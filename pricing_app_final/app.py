@@ -1141,8 +1141,7 @@ DISTANCE_LOOKUP = config.get('DISTANCE_LOOKUP', {})
 
 df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
 
-# Set of all cities with historical trip data (used to filter distance lookups)
-# Missing distances are only logged to MatchedDistances if at least one city is in this set
+# Set of all cities with historical trip data
 VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_city'].unique())
 
 # ============================================
@@ -1228,7 +1227,7 @@ def calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, recommen
     if recommended_sell: return recommended_sell, 'Recommended'
     return None, 'N/A'
 
-def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False):
+def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False, check_history=False):
     """
     Get distance for a route. Tries multiple sources in order:
     1. Historical trip data (median of actual trips)
@@ -1242,6 +1241,8 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False):
         lane_data: Optional pre-filtered lane data
         immediate_log: If True, log errors immediately (for single-lane pricing)
                       If False, queue errors for batch write (for bulk pricing)
+        check_history: If True, only log to MatchedDistances if at least one city 
+                      has historical data (for Master Grid). If False, log all missing.
     
     Returns: (distance_km, source_description)
     """
@@ -1276,15 +1277,16 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False):
     }, immediate=immediate_log)
     
     # Also log to MatchedDistances sheet for Google Maps lookup
-    # ONLY if:
-    # 1. We have valid English names for both cities
-    # 2. AT LEAST ONE city has historical data (exists in VALID_CITIES_AR)
-    if pickup_en and dest_en and pickup_en != pickup_ar and dest_en != dest_ar:
-        # Check if at least one city (or their canonical forms) has historical data
-        pickup_has_history = pickup_ar in VALID_CITIES_AR or p_can in VALID_CITIES_AR
-        dest_has_history = dest_ar in VALID_CITIES_AR or d_can in VALID_CITIES_AR
+    if pickup_en and dest_en:
+        should_log = True
         
-        if pickup_has_history or dest_has_history:
+        # If check_history is True, only log if at least one city has historical data
+        if check_history:
+            pickup_has_history = pickup_ar in VALID_CITIES_AR or p_can in VALID_CITIES_AR
+            dest_has_history = dest_ar in VALID_CITIES_AR or d_can in VALID_CITIES_AR
+            should_log = pickup_has_history or dest_has_history
+        
+        if should_log:
             log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en, immediate=immediate_log)
     
     return 0, 'Missing'
@@ -1433,12 +1435,28 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         res.update({'Blend_Price': p.get('predicted_cost'), 'Blend_Upper': p.get('cost_high'), 'Blend_Method': p['method']})
     return res
 
-def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
-    """Lookup route stats for bulk pricing - uses batch logging (immediate_log=False)."""
+def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, check_history=False):
+    """
+    Lookup route stats for bulk pricing - uses batch logging (immediate_log=False).
+    
+    Args:
+        pickup_ar: Pickup city in Arabic
+        dest_ar: Destination city in Arabic
+        vehicle_ar: Vehicle type in Arabic (optional)
+        dist_override: If provided, use this distance instead of looking it up
+        check_history: If True, only log to MatchedDistances if at least one city 
+                      has historical data (for Master Grid)
+    """
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
-    # Use immediate_log=False for bulk pricing (queues errors for batch write)
-    dist, _ = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=False)
+    
+    # Use override distance if provided, otherwise look it up
+    if dist_override is not None and dist_override > 0:
+        dist = dist_override
+    else:
+        # Use immediate_log=False for bulk pricing (queues errors for batch write)
+        dist, _ = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=False, check_history=check_history)
+    
     pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data)
     return {
         'From': to_english_city(pickup_ar), 'To': to_english_city(dest_ar), 'Distance': int(dist) if dist else 0,
@@ -1637,15 +1655,23 @@ with tab2:
     st.markdown(f"""
     **Upload a CSV to get pricing for each route.**
     
-    **Required:** `From`, `To`  
-    **Optional:** `Vehicle_Type` (default: Flatbed Trailer)
+    **Columns (by position, names ignored):**
+    1. **Pickup City** (required)
+    2. **Destination City** (required)
+    3. **Distance** (optional - overrides lookup if provided)
+    4. **Vehicle Type** (optional - default: Flatbed Trailer)
     
     **Output columns:**
     - Distance, Buy Price (rounded to 100), Sell Price (rounded to 50)
     - Target Margin, Backhaul Probability
     - Model Used, Confidence, Recent Count
     """)
-    st.download_button("📥 Template", pd.DataFrame({'From':['Jeddah','Riyadh'], 'To':['Riyadh','Dammam'], 'Vehicle_Type':['Flatbed Trailer','']}).to_csv(index=False), "template.csv", "text/csv")
+    st.download_button("📥 Template", pd.DataFrame({
+        'Pickup': ['Jeddah', 'Riyadh'], 
+        'Destination': ['Riyadh', 'Dammam'], 
+        'Distance': ['', ''],
+        'Vehicle_Type': ['Flatbed Trailer', '']
+    }).to_csv(index=False), "template.csv", "text/csv")
     
     upl = st.file_uploader("Upload CSV", type=['csv'])
     if upl:
@@ -1660,21 +1686,50 @@ with tab2:
                 res, unmat = [], []
                 prog = st.progress(0)
                 status_text = st.empty()
-                for i, row in r_df.iterrows():
-                    p_raw, d_raw = str(row.get('From','')).strip(), str(row.get('To','')).strip()
+                
+                # Get column values by position (iloc), not by name
+                for i in range(len(r_df)):
+                    row = r_df.iloc[i]
+                    
+                    # Column 1: Pickup (required)
+                    p_raw = str(row.iloc[0]).strip() if len(row) > 0 else ''
+                    
+                    # Column 2: Destination (required)
+                    d_raw = str(row.iloc[1]).strip() if len(row) > 1 else ''
+                    
+                    # Column 3: Distance (optional - overrides lookup)
+                    dist_override = None
+                    if len(row) > 2:
+                        dist_val = row.iloc[2]
+                        if pd.notna(dist_val) and str(dist_val).strip() not in ['', 'nan', 'None']:
+                            try:
+                                dist_override = float(str(dist_val).replace(',', '').strip())
+                            except ValueError:
+                                pass
+                    
+                    # Column 4: Vehicle Type (optional)
+                    v_raw = ''
+                    if len(row) > 3:
+                        v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
+                    
+                    # Normalize cities
                     p_ar, p_ok = normalize_city(p_raw)
                     d_ar, d_ok = normalize_city(d_raw)
+                    
                     if not p_ok: 
-                        unmat.append({'Row':i+1, 'Col':'From', 'Val':p_raw})
-                        log_exception('unmatched_city', {'row':i+1, 'column':'From', 'original_value':p_raw})
+                        unmat.append({'Row': i+1, 'Col': 'Pickup (Col 1)', 'Val': p_raw})
+                        log_exception('unmatched_city', {'row': i+1, 'column': 'Pickup', 'original_value': p_raw})
                     if not d_ok: 
-                        unmat.append({'Row':i+1, 'Col':'To', 'Val':d_raw})
-                        log_exception('unmatched_city', {'row':i+1, 'column':'To', 'original_value':d_raw})
-                    v_raw = str(row.get('Vehicle_Type','')).strip()
-                    v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['','nan','None','Auto'] else DEFAULT_VEHICLE_AR
-                    res.append(lookup_route_stats(p_ar, d_ar, v_ar))
+                        unmat.append({'Row': i+1, 'Col': 'Destination (Col 2)', 'Val': d_raw})
+                        log_exception('unmatched_city', {'row': i+1, 'column': 'Destination', 'original_value': d_raw})
+                    
+                    v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
+                    
+                    # Pass distance override to lookup function
+                    res.append(lookup_route_stats(p_ar, d_ar, v_ar, dist_override=dist_override))
                     prog.progress((i+1)/len(r_df))
                     status_text.text(f"Looking up {i+1}/{len(r_df)}: {p_raw} → {d_raw}")
+                
                 status_text.text("✅ Complete!")
                 st.session_state.bulk_results = pd.DataFrame(res)
                 st.session_state.bulk_unmatched = pd.DataFrame(unmat)
@@ -1812,7 +1867,7 @@ with tab2:
                     status_text.text(f"Batch {batch_num}: Generating {len(batch_combos)} routes...")
                     batch_results = []
                     for p_ar, d_ar in batch_combos:
-                        batch_results.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR))
+                        batch_results.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR, check_history=True))
                     
                     all_results.extend(batch_results)
                     

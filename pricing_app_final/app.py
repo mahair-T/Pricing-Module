@@ -298,6 +298,7 @@ def get_resolved_distances_from_sheet():
     """
     Read resolved distances from the MatchedDistances sheet.
     Returns list of dicts with pickup_ar, dest_ar, distance for rows with valid distances.
+    Also includes 'is_suggestion' flag to indicate if it's a manual user suggestion.
     """
     try:
         worksheet = get_matched_distances_sheet()
@@ -313,7 +314,11 @@ def get_resolved_distances_from_sheet():
                 pickup_ar = row[1] if len(row) > 1 else ''
                 dest_ar = row[2] if len(row) > 2 else ''
                 distance_value = row[6] if len(row) > 6 else ''  # Column G - Distance_Value
+                status = row[7] if len(row) > 7 else ''  # Column H - Status
                 added_to_pickle = row[8] if len(row) > 8 else 'No'  # Column I - default to 'No' if missing
+                
+                # Check if this is a manual user suggestion
+                is_suggestion = 'Suggested by' in status
                 
                 # Only get rows with valid numeric distance that haven't been added yet
                 if distance_value and added_to_pickle != 'Yes' and pickup_ar and dest_ar:
@@ -327,7 +332,8 @@ def get_resolved_distances_from_sheet():
                                 'row': i,
                                 'pickup_ar': pickup_ar,
                                 'dest_ar': dest_ar,
-                                'distance_km': dist_km
+                                'distance_km': dist_km,
+                                'is_suggestion': is_suggestion
                             })
                     except (ValueError, TypeError):
                         pass
@@ -379,22 +385,38 @@ def update_distance_pickle_from_sheet():
             distance_matrix = {}
         
         added_count = 0
+        updated_count = 0
+        skipped_count = 0
         rows_to_mark = []
         
         for item in resolved:
             key = (item['pickup_ar'], item['dest_ar'])
             rev_key = (item['dest_ar'], item['pickup_ar'])
+            new_dist = item['distance_km']
+            is_suggestion = item.get('is_suggestion', False)
             
-            # Add if not already in matrix
-            if key not in distance_matrix:
-                distance_matrix[key] = item['distance_km']
+            # Check if this is a new entry or an update
+            if key in distance_matrix:
+                old_dist = distance_matrix[key]
+                if old_dist != new_dist:
+                    # Only allow overwriting if it's a manual user suggestion
+                    if is_suggestion:
+                        distance_matrix[key] = new_dist
+                        distance_matrix[rev_key] = new_dist  # Also update reverse
+                        updated_count += 1
+                        rows_to_mark.append(item['row'])
+                    else:
+                        # API result trying to overwrite - skip but don't mark as added
+                        skipped_count += 1
+                else:
+                    # Same value, just mark as added
+                    rows_to_mark.append(item['row'])
+            else:
+                # New entry - always add
+                distance_matrix[key] = new_dist
+                distance_matrix[rev_key] = new_dist
                 added_count += 1
-            
-            # Also add reverse direction
-            if rev_key not in distance_matrix:
-                distance_matrix[rev_key] = item['distance_km']
-            
-            rows_to_mark.append(item['row'])
+                rows_to_mark.append(item['row'])
         
         # Save updated pickle
         with open(pkl_path, 'wb') as f:
@@ -406,7 +428,19 @@ def update_distance_pickle_from_sheet():
         # Mark rows as added in sheet
         mark_distances_as_added(rows_to_mark)
         
-        return True, added_count, f"Added {added_count} new distances to pickle"
+        # Build message
+        parts = []
+        if added_count > 0:
+            parts.append(f"{added_count} new")
+        if updated_count > 0:
+            parts.append(f"{updated_count} updated")
+        if skipped_count > 0:
+            parts.append(f"{skipped_count} skipped (already exists)")
+        
+        if parts:
+            return True, added_count + updated_count, f"Distances: {', '.join(parts)}"
+        else:
+            return True, 0, "No changes needed (distances already match)"
     
     except Exception as e:
         return False, 0, f"Error updating pickle: {str(e)}"
@@ -2104,12 +2138,14 @@ with tab2:
                     {'From': to_english_city(r['pickup_ar']), 
                      'To': to_english_city(r['dest_ar']), 
                      'Distance (km)': r['distance_km'],
+                     'Type': '✏️ Suggestion' if r.get('is_suggestion') else '🌐 API',
                      'Row': r['row']}
                     for r in resolved[:20]
                 ])
                 st.dataframe(preview_df, use_container_width=True, hide_index=True)
                 if len(resolved) > 20:
                     st.caption(f"... and {len(resolved) - 20} more")
+                st.caption("✏️ Suggestions can overwrite existing distances | 🌐 API results only add new distances")
         else:
             st.caption("No new distances available to import")
         

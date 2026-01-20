@@ -125,6 +125,186 @@ def get_reported_sheet():
     except Exception as e:
         return None
 
+def get_matched_distances_sheet():
+    """
+    Get or create the MatchedDistances sheet for Google Maps API distance lookups.
+    NOT cached because we need fresh connection for reads/writes.
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        sheet_url = st.secrets.get('error_log_sheet_url')
+        if not sheet_url:
+            return None
+        
+        spreadsheet = client.open_by_url(sheet_url)
+        
+        try:
+            worksheet = spreadsheet.worksheet('MatchedDistances')
+        except:
+            # Create sheet with headers and formula template
+            worksheet = spreadsheet.add_worksheet(title='MatchedDistances', rows=1000, cols=10)
+            headers = ['Timestamp', 'Pickup_AR', 'Destination_AR', 'Pickup_EN', 'Destination_EN', 
+                       'Distance_Formula', 'Distance_Value', 'Status', 'Added_To_Pickle']
+            worksheet.update('A1:I1', [headers])
+        
+        return worksheet
+    except Exception as e:
+        return None
+
+def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en):
+    """
+    Log a missing distance to the MatchedDistances sheet for Google Maps lookup.
+    Only logs if this city pair isn't already in the sheet.
+    """
+    try:
+        worksheet = get_matched_distances_sheet()
+        if not worksheet:
+            return False
+        
+        # Check if this pair already exists (check both directions)
+        existing = worksheet.get_all_values()
+        for row in existing[1:]:  # Skip header
+            if len(row) >= 5:
+                if (row[1] == pickup_ar and row[2] == dest_ar) or \
+                   (row[1] == dest_ar and row[2] == pickup_ar):
+                    return False  # Already exists
+        
+        # Find next row
+        next_row = len(existing) + 1
+        
+        # Build the GOOGLEMAPS_DISTANCE formula
+        formula = f'=GOOGLEMAPS_DISTANCE("{pickup_en}, Saudi Arabia", "{dest_en}, Saudi Arabia", "driving")'
+        
+        # Write the row
+        row_data = [
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            pickup_ar,
+            dest_ar,
+            pickup_en,
+            dest_en,
+            formula,  # Column F - the formula
+            '',       # Column G - will be filled by formula result or manual
+            'Pending',
+            'No'
+        ]
+        worksheet.update(f'A{next_row}:I{next_row}', [row_data], value_input_option='USER_ENTERED')
+        return True
+    except Exception as e:
+        return False
+
+def get_resolved_distances_from_sheet():
+    """
+    Read resolved distances from the MatchedDistances sheet.
+    Returns list of dicts with pickup_ar, dest_ar, distance for rows with valid distances.
+    """
+    try:
+        worksheet = get_matched_distances_sheet()
+        if not worksheet:
+            return []
+        
+        all_data = worksheet.get_all_values()
+        resolved = []
+        
+        for i, row in enumerate(all_data[1:], start=2):  # Skip header, track row number
+            if len(row) >= 9:
+                pickup_ar = row[1]
+                dest_ar = row[2]
+                distance_value = row[6]  # Column G - Distance_Value
+                status = row[7]
+                added_to_pickle = row[8]
+                
+                # Only get rows with valid numeric distance that haven't been added yet
+                if distance_value and added_to_pickle != 'Yes':
+                    try:
+                        # Handle various number formats
+                        dist_clean = str(distance_value).replace(',', '').replace(' km', '').strip()
+                        dist_km = float(dist_clean)
+                        if dist_km > 0:
+                            resolved.append({
+                                'row': i,
+                                'pickup_ar': pickup_ar,
+                                'dest_ar': dest_ar,
+                                'distance_km': dist_km
+                            })
+                    except (ValueError, TypeError):
+                        pass
+        
+        return resolved
+    except Exception as e:
+        return []
+
+def mark_distances_as_added(row_numbers):
+    """Mark rows in MatchedDistances sheet as added to pickle."""
+    try:
+        worksheet = get_matched_distances_sheet()
+        if not worksheet and row_numbers:
+            return False
+        
+        # Update each row's "Added_To_Pickle" column
+        for row_num in row_numbers:
+            worksheet.update(f'I{row_num}', [['Yes']])
+        
+        return True
+    except Exception as e:
+        return False
+
+def update_distance_pickle_from_sheet():
+    """
+    Pull resolved distances from MatchedDistances sheet and update the distance pickle.
+    Returns (success, count_added, message)
+    """
+    global DISTANCE_MATRIX
+    
+    resolved = get_resolved_distances_from_sheet()
+    if not resolved:
+        return True, 0, "No new distances to add"
+    
+    # Load existing pickle
+    pkl_path = os.path.join(APP_DIR, 'model_export', 'distance_matrix.pkl')
+    
+    try:
+        if os.path.exists(pkl_path):
+            with open(pkl_path, 'rb') as f:
+                distance_matrix = pickle.load(f)
+        else:
+            distance_matrix = {}
+        
+        added_count = 0
+        rows_to_mark = []
+        
+        for item in resolved:
+            key = (item['pickup_ar'], item['dest_ar'])
+            rev_key = (item['dest_ar'], item['pickup_ar'])
+            
+            # Add if not already in matrix
+            if key not in distance_matrix:
+                distance_matrix[key] = item['distance_km']
+                added_count += 1
+            
+            # Also add reverse direction
+            if rev_key not in distance_matrix:
+                distance_matrix[rev_key] = item['distance_km']
+            
+            rows_to_mark.append(item['row'])
+        
+        # Save updated pickle
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(distance_matrix, f)
+        
+        # Update global variable
+        DISTANCE_MATRIX = distance_matrix
+        
+        # Mark rows as added in sheet
+        mark_distances_as_added(rows_to_mark)
+        
+        return True, added_count, f"Added {added_count} new distances to pickle"
+    
+    except Exception as e:
+        return False, 0, f"Error updating pickle: {str(e)}"
+
 # ============================================
 # BULK SHEET HELPER - NO CACHING (connections can go stale)
 # ============================================
@@ -855,6 +1035,9 @@ ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
 DISTANCE_LOOKUP = config.get('DISTANCE_LOOKUP', {})
 
 df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
+
+# Set of all cities with historical trip data (used to filter distance lookups)
+# Missing distances are only logged to MatchedDistances if at least one city is in this set
 VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_city'].unique())
 
 # ============================================
@@ -971,10 +1154,25 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     if (d_can, p_can) in DISTANCE_MATRIX: return DISTANCE_MATRIX[(d_can, p_can)], 'Matrix (canonical reverse)'
     
     # Log missing distance for debugging
+    pickup_en = to_english_city(pickup_ar)
+    dest_en = to_english_city(dest_ar)
     log_exception('missing_distance', {
         'pickup_city': pickup_ar, 'destination_city': dest_ar,
-        'pickup_en': to_english_city(pickup_ar), 'destination_en': to_english_city(dest_ar)
+        'pickup_en': pickup_en, 'destination_en': dest_en
     })
+    
+    # Also log to MatchedDistances sheet for Google Maps lookup
+    # ONLY if:
+    # 1. We have valid English names for both cities
+    # 2. AT LEAST ONE city has historical data (exists in VALID_CITIES_AR)
+    if pickup_en and dest_en and pickup_en != pickup_ar and dest_en != dest_ar:
+        # Check if at least one city (or their canonical forms) has historical data
+        pickup_has_history = pickup_ar in VALID_CITIES_AR or p_can in VALID_CITIES_AR
+        dest_has_history = dest_ar in VALID_CITIES_AR or d_can in VALID_CITIES_AR
+        
+        if pickup_has_history or dest_has_history:
+            log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en)
+    
     return 0, 'Missing'
 
 def round_to_nearest(value, nearest):
@@ -1563,6 +1761,55 @@ with tab2:
                 "master_grid.csv", 
                 "text/csv"
             )
+    
+    # ============================================
+    # DISTANCE UPDATE FROM GOOGLE SHEETS
+    # Pull resolved distances from MatchedDistances sheet
+    # ============================================
+    st.markdown("---")
+    with st.expander("📏 Admin: Update Distances from Google Sheets"):
+        st.info("""
+        **How this works:**
+        1. Missing distances are logged to the 'MatchedDistances' sheet
+        2. Google Apps Script uses GOOGLEMAPS_DISTANCE formula to get distances
+        3. Once distances resolve, click below to import them into the app
+        """)
+        
+        # Show count of pending distances
+        resolved = get_resolved_distances_from_sheet()
+        if resolved:
+            st.success(f"✅ {len(resolved)} new distances ready to import")
+            
+            # Preview
+            with st.expander("Preview distances to import"):
+                preview_df = pd.DataFrame([
+                    {'From': to_english_city(r['pickup_ar']), 
+                     'To': to_english_city(r['dest_ar']), 
+                     'Distance (km)': r['distance_km']}
+                    for r in resolved[:20]
+                ])
+                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                if len(resolved) > 20:
+                    st.caption(f"... and {len(resolved) - 20} more")
+        else:
+            st.caption("No new distances available to import")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Import Distances to Pickle", type="primary", disabled=len(resolved)==0):
+                with st.spinner("Importing distances..."):
+                    success, count, message = update_distance_pickle_from_sheet()
+                    if success:
+                        st.success(message)
+                        if count > 0:
+                            st.balloons()
+                            st.cache_resource.clear()  # Clear cached data to reload
+                    else:
+                        st.error(message)
+        
+        with col2:
+            if st.button("🔍 Refresh Count"):
+                st.rerun()
 
 st.markdown("---")
 # ERROR LOG SECTION (Restored to exact snippet)

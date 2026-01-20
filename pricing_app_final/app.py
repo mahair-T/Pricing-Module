@@ -147,13 +147,32 @@ def get_bulk_sheet():
         try:
             worksheet = spreadsheet.worksheet(BULK_TAB_NAME)
         except:
-            # Create the sheet if it doesn't exist
-            worksheet = spreadsheet.add_worksheet(title=BULK_TAB_NAME, rows=5000, cols=20)
+            # Create the sheet if it doesn't exist (with enough rows for master grid)
+            worksheet = spreadsheet.add_worksheet(title=BULK_TAB_NAME, rows=10000, cols=20)
             
         return worksheet
     except Exception as e:
         st.error(f"Google Sheets connection error: {str(e)}")
         return None
+
+def ensure_sheet_rows(worksheet, required_rows):
+    """
+    Ensure the worksheet has enough rows. Expands if needed.
+    
+    Args:
+        worksheet: gspread worksheet object
+        required_rows: minimum number of rows needed
+    """
+    try:
+        current_rows = worksheet.row_count
+        if current_rows < required_rows:
+            # Add some buffer (20% extra)
+            new_rows = int(required_rows * 1.2)
+            worksheet.resize(rows=new_rows)
+            return True
+    except Exception as e:
+        pass
+    return False
 
 def log_exception(exception_type, details, immediate=False):
     """
@@ -1140,22 +1159,27 @@ with tab1:
          st.error("City list is empty. Check normalization file.")
          st.stop()
     
+    # Initialize defaults in session state if not present (avoids warning on swap)
+    if 'single_pickup' not in st.session_state:
+        st.session_state.single_pickup = 'Jeddah' if 'Jeddah' in pickup_cities_en else pickup_cities_en[0]
+    if 'single_dest' not in st.session_state:
+        st.session_state.single_dest = 'Riyadh' if 'Riyadh' in dest_cities_en else dest_cities_en[0]
+    if 'single_vehicle' not in st.session_state:
+        st.session_state.single_vehicle = DEFAULT_VEHICLE_EN if DEFAULT_VEHICLE_EN in vehicle_types_en else vehicle_types_en[0]
+    
     # Use columns with swap button in the middle
     col1, col_swap, col2, col3 = st.columns([3, 0.5, 3, 3])
     with col1:
-        def_pickup_idx = pickup_cities_en.index('Jeddah') if 'Jeddah' in pickup_cities_en else 0
-        pickup_en = st.selectbox("Pickup City", options=pickup_cities_en, index=def_pickup_idx, key='single_pickup')
+        pickup_en = st.selectbox("Pickup City", options=pickup_cities_en, key='single_pickup')
         pickup_city = to_arabic_city(pickup_en)
     with col_swap:
         st.markdown("<br>", unsafe_allow_html=True)  # Align with selectbox
         st.button("⇄", key='swap_cities', on_click=swap_cities, help="Swap Pickup ↔ Destination")
     with col2:
-        def_dest_idx = dest_cities_en.index('Riyadh') if 'Riyadh' in dest_cities_en else 0
-        dest_en = st.selectbox("Destination City", options=dest_cities_en, index=def_dest_idx, key='single_dest')
+        dest_en = st.selectbox("Destination City", options=dest_cities_en, key='single_dest')
         destination_city = to_arabic_city(dest_en)
     with col3:
-        def_idx = vehicle_types_en.index(DEFAULT_VEHICLE_EN) if DEFAULT_VEHICLE_EN in vehicle_types_en else 0
-        vehicle_en = st.selectbox("Vehicle Type", options=vehicle_types_en, index=def_idx, key='single_vehicle')
+        vehicle_en = st.selectbox("Vehicle Type", options=vehicle_types_en, key='single_vehicle')
         vehicle_type = to_arabic_vehicle(vehicle_en)
 
     st.subheader("📦 Optional Details")
@@ -1426,6 +1450,9 @@ with tab2:
                 # Build list of all route combinations (excluding same-city)
                 combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
                 total_routes = len(combos)
+                
+                # Ensure sheet has enough rows (routes + header + timestamp + buffer)
+                ensure_sheet_rows(wks, total_routes + 10)
                 
                 # Determine starting point
                 if resume_clicked and has_incomplete:

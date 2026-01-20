@@ -1128,14 +1128,27 @@ tab1, tab2 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup"])
 
 with tab1:
     st.subheader("📋 Route Information")
-    col1, col2, col3 = st.columns(3)
+    
+    # Callback for swap - must be defined before the button
+    def swap_cities():
+        pickup = st.session_state.single_pickup
+        dest = st.session_state.single_dest
+        st.session_state.single_pickup = dest
+        st.session_state.single_dest = pickup
+    
     if not pickup_cities_en:
          st.error("City list is empty. Check normalization file.")
          st.stop()
+    
+    # Use columns with swap button in the middle
+    col1, col_swap, col2, col3 = st.columns([3, 0.5, 3, 3])
     with col1:
         def_pickup_idx = pickup_cities_en.index('Jeddah') if 'Jeddah' in pickup_cities_en else 0
         pickup_en = st.selectbox("Pickup City", options=pickup_cities_en, index=def_pickup_idx, key='single_pickup')
         pickup_city = to_arabic_city(pickup_en)
+    with col_swap:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align with selectbox
+        st.button("⇄", key='swap_cities', on_click=swap_cities, help="Swap Pickup ↔ Destination")
     with col2:
         def_dest_idx = dest_cities_en.index('Riyadh') if 'Riyadh' in dest_cities_en else 0
         dest_en = st.selectbox("Destination City", options=dest_cities_en, index=def_dest_idx, key='single_dest')
@@ -1144,16 +1157,6 @@ with tab1:
         def_idx = vehicle_types_en.index(DEFAULT_VEHICLE_EN) if DEFAULT_VEHICLE_EN in vehicle_types_en else 0
         vehicle_en = st.selectbox("Vehicle Type", options=vehicle_types_en, index=def_idx, key='single_vehicle')
         vehicle_type = to_arabic_vehicle(vehicle_en)
-    
-    # Swap button - directly swap the session state keys
-    if st.button("🔄 Swap Pickup ↔ Destination", key='swap_cities'):
-        # Get current values
-        current_pickup = st.session_state.get('single_pickup', pickup_en)
-        current_dest = st.session_state.get('single_dest', dest_en)
-        # Swap them
-        st.session_state.single_pickup = current_dest
-        st.session_state.single_dest = current_pickup
-        st.rerun()
 
     st.subheader("📦 Optional Details")
     col1, col2, col3 = st.columns(3)

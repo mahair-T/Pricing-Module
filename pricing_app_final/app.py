@@ -562,6 +562,90 @@ def report_distance_issue(pickup_ar, dest_ar, pickup_en, dest_en, current_distan
         pass
     return False
 
+def suggest_distance_change(pickup_ar, dest_ar, pickup_en, dest_en, current_distance, suggested_distance, user_name):
+    """
+    Suggest a distance change for a lane.
+    Logs to both Reported sheet (for tracking) and MatchedDistances sheet (for applying).
+    
+    Args:
+        pickup_ar, dest_ar: Arabic city names
+        pickup_en, dest_en: English city names
+        current_distance: Current distance in km
+        suggested_distance: User's suggested distance in km
+        user_name: Name of user suggesting the change
+    
+    Returns: (success, message)
+    """
+    success_reported = False
+    success_matched = False
+    
+    # 1. Log to Reported sheet with user info and distance change
+    try:
+        worksheet = get_reported_sheet()
+        if worksheet:
+            row = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                pickup_ar,
+                dest_ar,
+                pickup_en,
+                dest_en,
+                str(current_distance),
+                'Distance suggestion',
+                f"User: {user_name} | Suggested: {suggested_distance} km (was {current_distance} km)"
+            ]
+            worksheet.append_row(row)
+            success_reported = True
+    except Exception as e:
+        pass
+    
+    # 2. Log to MatchedDistances sheet (ready to be applied)
+    try:
+        worksheet = get_matched_distances_sheet()
+        if worksheet:
+            # Check if this pair already exists
+            existing = worksheet.get_all_values()
+            row_to_update = None
+            for i, row in enumerate(existing[1:], start=2):
+                if len(row) >= 5:
+                    if (row[1] == pickup_ar and row[2] == dest_ar) or \
+                       (row[1] == dest_ar and row[2] == pickup_ar):
+                        row_to_update = i
+                        break
+            
+            if row_to_update:
+                # Update existing row with suggested distance
+                worksheet.update(f'G{row_to_update}', [[suggested_distance]])
+                worksheet.update(f'H{row_to_update}', [[f'Suggested by {user_name}']])
+                worksheet.update(f'I{row_to_update}', [['No']])  # Reset "Added to Pickle" flag
+            else:
+                # Add new row
+                next_row = len(existing) + 1
+                row_data = [
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    pickup_ar,
+                    dest_ar,
+                    pickup_en,
+                    dest_en,
+                    '',  # No formula - manual entry
+                    str(suggested_distance),  # Direct value
+                    f'Suggested by {user_name}',
+                    'No'
+                ]
+                worksheet.update(f'A{next_row}:I{next_row}', [row_data])
+            
+            success_matched = True
+    except Exception as e:
+        pass
+    
+    if success_reported and success_matched:
+        return True, "Distance suggestion logged and ready for import"
+    elif success_reported:
+        return True, "Logged to reports but failed to add to distance queue"
+    elif success_matched:
+        return True, "Added to distance queue but failed to log report"
+    else:
+        return False, "Failed to log suggestion"
+
 def get_error_log_csv():
     """Get error log as CSV string."""
     if 'error_log' not in st.session_state or len(st.session_state.error_log) == 0:
@@ -1640,9 +1724,50 @@ with tab1:
 
     if 'last_result' in st.session_state and 'last_lane' in st.session_state:
         st.markdown("---")
-        with st.expander("🚨 Report Issue", expanded=False):
+        
+        # Distance Suggestion Section
+        with st.expander("📏 Suggest Distance Change", expanded=False):
+            l, r = st.session_state.last_lane, st.session_state.last_result
+            st.caption(f"Lane: **{l['pickup_en']} → {l['dest_en']}** | Current distance: **{r['Distance_km']:.0f} km**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                user_name = st.text_input("Your Name", key='suggest_user_name', placeholder="Enter your name")
+            with col2:
+                suggested_dist = st.number_input(
+                    "Suggested Distance", 
+                    min_value=0.0, 
+                    max_value=5000.0, 
+                    value=float(r['Distance_km']) if r['Distance_km'] > 0 else 0.0,
+                    step=10.0,
+                    key='suggest_distance',
+                    help="Enter distance in km (no need to write 'km')"
+                )
+            
+            if st.button("✅ Submit Distance Suggestion", type="primary", key='submit_distance_suggestion'):
+                if not user_name or user_name.strip() == '':
+                    st.error("Please enter your name")
+                elif suggested_dist <= 0:
+                    st.error("Please enter a valid distance greater than 0")
+                elif suggested_dist == r['Distance_km']:
+                    st.warning("Suggested distance is the same as current distance")
+                else:
+                    success, message = suggest_distance_change(
+                        l['pickup_ar'], l['dest_ar'], 
+                        l['pickup_en'], l['dest_en'],
+                        r['Distance_km'], suggested_dist, 
+                        user_name.strip()
+                    )
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.info(f"Changed: {r['Distance_km']:.0f} km → {suggested_dist:.0f} km")
+                    else:
+                        st.error(f"❌ {message}")
+        
+        # Report Issue Section (existing)
+        with st.expander("🚨 Report Other Issue", expanded=False):
             st.caption(f"Reporting: {st.session_state.last_lane['pickup_en']} → {st.session_state.last_lane['dest_en']}")
-            iss = st.selectbox("Issue Type", ["Distance incorrect", "Distance 0/missing", "Data wrong", "Other"], key='rep_type')
+            iss = st.selectbox("Issue Type", ["Data wrong", "Price seems off", "Other"], key='rep_type')
             note = st.text_area("Notes", key='rep_note')
             if st.button("Submit Report"):
                 l, r = st.session_state.last_lane, st.session_state.last_result

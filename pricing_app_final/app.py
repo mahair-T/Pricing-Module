@@ -154,50 +154,145 @@ def get_matched_distances_sheet():
     except Exception as e:
         return None
 
-def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en):
+def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en, immediate=True):
     """
     Log a missing distance to the MatchedDistances sheet for Google Maps lookup.
-    Only logs if this city pair isn't already in the sheet.
+    Only logs if this city pair isn't already in the sheet or pending queue.
+    
+    Args:
+        pickup_ar, dest_ar: Arabic city names
+        pickup_en, dest_en: English city names
+        immediate: If True, write to sheet immediately. If False, queue for batch write.
     """
+    # Initialize pending queue if needed
+    if 'matched_distances_pending' not in st.session_state:
+        st.session_state.matched_distances_pending = []
+    
+    # Check if already in pending queue (both directions)
+    for item in st.session_state.matched_distances_pending:
+        if (item['pickup_ar'] == pickup_ar and item['dest_ar'] == dest_ar) or \
+           (item['pickup_ar'] == dest_ar and item['dest_ar'] == pickup_ar):
+            return False  # Already queued
+    
+    if immediate:
+        # Write immediately (for single-lane pricing)
+        try:
+            worksheet = get_matched_distances_sheet()
+            if not worksheet:
+                return False
+            
+            # Check if this pair already exists in sheet (check both directions)
+            existing = worksheet.get_all_values()
+            for row in existing[1:]:  # Skip header
+                if len(row) >= 5:
+                    if (row[1] == pickup_ar and row[2] == dest_ar) or \
+                       (row[1] == dest_ar and row[2] == pickup_ar):
+                        return False  # Already exists
+            
+            # Find next row
+            next_row = len(existing) + 1
+        
+            # 1. Build the GOOGLEMAPS_DISTANCE formula for Column F
+            formula = f'=GOOGLEMAPS_DISTANCE("{pickup_en}, Saudi Arabia", "{dest_en}, Saudi Arabia", "driving")'
+            
+            # 2. Build the Logic Formula for Column G
+            # Logic: IF(F is a number greater than 0, return F, else blank)
+            value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
+            
+            # Write the row
+            row_data = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                pickup_ar,
+                dest_ar,
+                pickup_en,
+                dest_en,
+                formula,    # Column F: The calculation
+                value_ref,  # Column G: The conditional check
+                'Pending',
+                'No'
+            ]
+            worksheet.update(f'A{next_row}:I{next_row}', [row_data], value_input_option='USER_ENTERED')
+            return True
+        except Exception as e:
+            return False
+    else:
+        # Queue for batch write (for bulk pricing)
+        st.session_state.matched_distances_pending.append({
+            'pickup_ar': pickup_ar,
+            'dest_ar': dest_ar,
+            'pickup_en': pickup_en,
+            'dest_en': dest_en
+        })
+        return True
+
+def flush_matched_distances_to_sheet():
+    """
+    Flush pending matched distances to Google Sheet.
+    Call at the end of bulk operations.
+    
+    Returns: (success, count) tuple
+    """
+    if 'matched_distances_pending' not in st.session_state or len(st.session_state.matched_distances_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.matched_distances_pending
+    
     try:
         worksheet = get_matched_distances_sheet()
         if not worksheet:
-            return False
+            return False, 0
         
-        # Check if this pair already exists (check both directions)
+        # Get existing data to check for duplicates and find next row
         existing = worksheet.get_all_values()
-        for row in existing[1:]:  # Skip header
+        existing_pairs = set()
+        for row in existing[1:]:
             if len(row) >= 5:
-                if (row[1] == pickup_ar and row[2] == dest_ar) or \
-                   (row[1] == dest_ar and row[2] == pickup_ar):
-                    return False  # Already exists
+                existing_pairs.add((row[1], row[2]))
+                existing_pairs.add((row[2], row[1]))  # Both directions
         
-        # Find next row
         next_row = len(existing) + 1
+        rows_to_add = []
+        
+        for item in pending:
+            # Skip if already exists
+            if (item['pickup_ar'], item['dest_ar']) in existing_pairs:
+                continue
+            if (item['dest_ar'], item['pickup_ar']) in existing_pairs:
+                continue
+            
+            # Build formulas
+            formula = f'=GOOGLEMAPS_DISTANCE("{item["pickup_en"]}, Saudi Arabia", "{item["dest_en"]}, Saudi Arabia", "driving")'
+            value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
+            
+            row_data = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                item['pickup_ar'],
+                item['dest_ar'],
+                item['pickup_en'],
+                item['dest_en'],
+                formula,
+                value_ref,
+                'Pending',
+                'No'
+            ]
+            rows_to_add.append(row_data)
+            
+            # Add to existing pairs to avoid duplicates within this batch
+            existing_pairs.add((item['pickup_ar'], item['dest_ar']))
+            existing_pairs.add((item['dest_ar'], item['pickup_ar']))
+            next_row += 1
+        
+        if rows_to_add:
+            # Write all rows at once
+            start_row = len(existing) + 1
+            worksheet.update(f'A{start_row}:I{start_row + len(rows_to_add) - 1}', rows_to_add, value_input_option='USER_ENTERED')
+        
+        # Clear pending queue
+        st.session_state.matched_distances_pending = []
+        return True, len(rows_to_add)
     
-        # 1. Build the GOOGLEMAPS_DISTANCE formula for Column F
-        formula = f'=GOOGLEMAPS_DISTANCE("{pickup_en}, Saudi Arabia", "{dest_en}, Saudi Arabia", "driving")'
-        
-        # 2. Build the Logic Formula for Column G
-        # Logic: IF(F is a number greater than 0, return F, else blank)
-        value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
-        
-        # Write the row
-        row_data = [
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            pickup_ar,
-            dest_ar,
-            pickup_en,
-            dest_en,
-            formula,    # Column F: The calculation
-            value_ref,  # Column G: The conditional check
-            'Pending',
-            'No'
-        ]
-        worksheet.update(f'A{next_row}:I{next_row}', [row_data], value_input_option='USER_ENTERED')
-        return True
     except Exception as e:
-        return False
+        return False, 0
 
 def get_resolved_distances_from_sheet():
     """
@@ -1133,13 +1228,20 @@ def calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, recommen
     if recommended_sell: return recommended_sell, 'Recommended'
     return None, 'N/A'
 
-def get_distance(pickup_ar, dest_ar, lane_data=None):
+def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False):
     """
     Get distance for a route. Tries multiple sources in order:
     1. Historical trip data (median of actual trips)
     2. Reverse lane historical data
     3. Distance lookup from config
     4. Distance matrix (canonical and reverse lookups)
+    
+    Args:
+        pickup_ar: Pickup city in Arabic
+        dest_ar: Destination city in Arabic
+        lane_data: Optional pre-filtered lane data
+        immediate_log: If True, log errors immediately (for single-lane pricing)
+                      If False, queue errors for batch write (for bulk pricing)
     
     Returns: (distance_km, source_description)
     """
@@ -1166,10 +1268,12 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
     # Log missing distance for debugging
     pickup_en = to_english_city(pickup_ar)
     dest_en = to_english_city(dest_ar)
+    
+    # Log to ErrorLog sheet
     log_exception('missing_distance', {
         'pickup_city': pickup_ar, 'destination_city': dest_ar,
         'pickup_en': pickup_en, 'destination_en': dest_en
-    })
+    }, immediate=immediate_log)
     
     # Also log to MatchedDistances sheet for Google Maps lookup
     # ONLY if:
@@ -1181,7 +1285,7 @@ def get_distance(pickup_ar, dest_ar, lane_data=None):
         dest_has_history = dest_ar in VALID_CITIES_AR or d_can in VALID_CITIES_AR
         
         if pickup_has_history or dest_has_history:
-            log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en)
+            log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en, immediate=immediate_log)
     
     return 0, 'Missing'
 
@@ -1299,7 +1403,8 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         w = df_knn[(df_knn['commodity'] == commodity) & (df_knn['weight'] > 0)]['weight']
         weight = w.median() if len(w) > 0 else 25.0
         
-    dist, dist_src = get_distance(pickup_ar, dest_ar, lane_data)
+    # Use immediate_log=True for single-lane pricing (writes to sheets immediately)
+    dist, dist_src = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=True)
     if dist == 0: dist, dist_src = 500, 'Default'
     
     pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data)
@@ -1329,9 +1434,11 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     return res
 
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None):
+    """Lookup route stats for bulk pricing - uses batch logging (immediate_log=False)."""
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
-    dist, _ = get_distance(pickup_ar, dest_ar, lane_data)
+    # Use immediate_log=False for bulk pricing (queues errors for batch write)
+    dist, _ = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=False)
     pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data)
     return {
         'From': to_english_city(pickup_ar), 'To': to_english_city(dest_ar), 'Distance': int(dist) if dist else 0,
@@ -1576,6 +1683,11 @@ with tab2:
                 flushed_ok, flushed_count = flush_error_log_to_sheet()
                 if flushed_count > 0:
                     st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
+                
+                # Flush any pending matched distances to Google Sheets
+                dist_ok, dist_count = flush_matched_distances_to_sheet()
+                if dist_count > 0:
+                    st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
         except Exception as e: st.error(f"Error: {e}")
 
     # Results Display (Outside indentation so it persists)
@@ -1704,10 +1816,13 @@ with tab2:
                     
                     all_results.extend(batch_results)
                     
-                    # Check if we need to flush error logs (every 500 errors)
+                    # Check if we need to flush error logs and matched distances (every 500 errors)
                     pending_errors = len(st.session_state.get('error_log_pending', []))
+                    pending_distances = len(st.session_state.get('matched_distances_pending', []))
                     if pending_errors >= 500:
                         flush_error_log_to_sheet(batch_size=500)
+                    if pending_distances >= 100:
+                        flush_matched_distances_to_sheet()
                     
                     # Write this batch to sheet
                     status_text.text(f"Batch {batch_num}: Writing {len(batch_results)} rows to sheet...")
@@ -1728,8 +1843,9 @@ with tab2:
                             'all_results': all_results,
                             'error_message': f"Failed at batch {batch_num}: {str(e)}"
                         }
-                        # Flush any pending errors before rerun
+                        # Flush any pending errors and matched distances before rerun
                         flush_error_log_to_sheet(batch_size=500)
+                        flush_matched_distances_to_sheet()
                         st.rerun()
                     
                     # Update progress
@@ -1759,6 +1875,11 @@ with tab2:
                 flushed_ok, flushed_count = flush_error_log_to_sheet(batch_size=500)
                 if flushed_count > 0:
                     st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
+                
+                # Flush any remaining pending matched distances
+                dist_ok, dist_count = flush_matched_distances_to_sheet()
+                if dist_count > 0:
+                    st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
                 
                 # Store for download
                 st.session_state.master_grid_df = pd.DataFrame(all_results)

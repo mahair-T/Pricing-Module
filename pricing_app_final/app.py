@@ -308,18 +308,19 @@ def get_resolved_distances_from_sheet():
         resolved = []
         
         for i, row in enumerate(all_data[1:], start=2):  # Skip header, track row number
-            if len(row) >= 9:
-                pickup_ar = row[1]
-                dest_ar = row[2]
-                distance_value = row[6]  # Column G - Distance_Value
-                status = row[7]
-                added_to_pickle = row[8]
+            # Need at least 7 columns (up to column G with distance value)
+            if len(row) >= 7:
+                pickup_ar = row[1] if len(row) > 1 else ''
+                dest_ar = row[2] if len(row) > 2 else ''
+                distance_value = row[6] if len(row) > 6 else ''  # Column G - Distance_Value
+                added_to_pickle = row[8] if len(row) > 8 else 'No'  # Column I - default to 'No' if missing
                 
                 # Only get rows with valid numeric distance that haven't been added yet
-                if distance_value and added_to_pickle != 'Yes':
+                if distance_value and added_to_pickle != 'Yes' and pickup_ar and dest_ar:
                     try:
                         # Handle various number formats
-                        dist_clean = str(distance_value).replace(',', '').replace(' km', '').strip()
+                        dist_clean = str(distance_value).replace(',', '').replace(' km', '').replace('km', '').strip()
+                        # Handle float strings like "960.0"
                         dist_km = float(dist_clean)
                         if dist_km > 0:
                             resolved.append({
@@ -606,17 +607,23 @@ def suggest_distance_change(pickup_ar, dest_ar, pickup_en, dest_en, current_dist
             existing = worksheet.get_all_values()
             row_to_update = None
             for i, row in enumerate(existing[1:], start=2):
-                if len(row) >= 5:
+                if len(row) >= 3:
                     if (row[1] == pickup_ar and row[2] == dest_ar) or \
                        (row[1] == dest_ar and row[2] == pickup_ar):
                         row_to_update = i
                         break
             
+            # Convert suggested_distance to int for cleaner storage
+            dist_int = int(round(suggested_distance))
+            
             if row_to_update:
-                # Update existing row with suggested distance
-                worksheet.update(f'G{row_to_update}', [[suggested_distance]])
-                worksheet.update(f'H{row_to_update}', [[f'Suggested by {user_name}']])
-                worksheet.update(f'I{row_to_update}', [['No']])  # Reset "Added to Pickle" flag
+                # Update existing row - update all relevant columns in one call
+                worksheet.update(f'F{row_to_update}:I{row_to_update}', [[
+                    '',  # Column F - clear any formula
+                    str(dist_int),  # Column G - distance value
+                    f'Suggested by {user_name}',  # Column H - status
+                    'No'  # Column I - not yet added to pickle
+                ]])
             else:
                 # Add new row
                 next_row = len(existing) + 1
@@ -627,7 +634,7 @@ def suggest_distance_change(pickup_ar, dest_ar, pickup_en, dest_en, current_dist
                     pickup_en,
                     dest_en,
                     '',  # No formula - manual entry
-                    str(suggested_distance),  # Direct value
+                    str(dist_int),  # Direct value as string
                     f'Suggested by {user_name}',
                     'No'
                 ]
@@ -2082,8 +2089,8 @@ with tab2:
         st.info("""
         **How this works:**
         1. Missing distances are logged to the 'MatchedDistances' sheet
-        2. Google Apps Script uses GOOGLEMAPS_DISTANCE formula to get distances
-        3. Once distances resolve, click below to import them into the app
+        2. Google Apps Script or manual entry provides distances in Column G
+        3. Once distances are filled, click below to import them into the app
         """)
         
         # Show count of pending distances
@@ -2096,7 +2103,8 @@ with tab2:
                 preview_df = pd.DataFrame([
                     {'From': to_english_city(r['pickup_ar']), 
                      'To': to_english_city(r['dest_ar']), 
-                     'Distance (km)': r['distance_km']}
+                     'Distance (km)': r['distance_km'],
+                     'Row': r['row']}
                     for r in resolved[:20]
                 ])
                 st.dataframe(preview_df, use_container_width=True, hide_index=True)
@@ -2104,6 +2112,25 @@ with tab2:
                     st.caption(f"... and {len(resolved) - 20} more")
         else:
             st.caption("No new distances available to import")
+        
+        # Debug view
+        with st.expander("🔧 Debug: View Raw Sheet Data"):
+            try:
+                worksheet = get_matched_distances_sheet()
+                if worksheet:
+                    all_data = worksheet.get_all_values()
+                    st.caption(f"Total rows in sheet: {len(all_data)}")
+                    if len(all_data) > 1:
+                        # Show last 10 rows
+                        st.write("**Last 10 rows (raw):**")
+                        for i, row in enumerate(all_data[-10:], start=max(1, len(all_data)-9)):
+                            st.text(f"Row {i}: {row}")
+                    else:
+                        st.caption("Sheet is empty (only header)")
+                else:
+                    st.warning("Could not connect to MatchedDistances sheet")
+            except Exception as e:
+                st.error(f"Error reading sheet: {e}")
         
         col1, col2 = st.columns(2)
         with col1:

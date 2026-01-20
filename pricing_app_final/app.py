@@ -174,9 +174,13 @@ def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en):
         
         # Find next row
         next_row = len(existing) + 1
-        
-        # Build the GOOGLEMAPS_DISTANCE formula
+    
+        # 1. Build the GOOGLEMAPS_DISTANCE formula for Column F
         formula = f'=GOOGLEMAPS_DISTANCE("{pickup_en}, Saudi Arabia", "{dest_en}, Saudi Arabia", "driving")'
+        
+        # 2. Build the Logic Formula for Column G
+        # Logic: IF(F is a number greater than 0, return F, else blank)
+        value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
         
         # Write the row
         row_data = [
@@ -185,8 +189,8 @@ def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en):
             dest_ar,
             pickup_en,
             dest_en,
-            formula,  # Column F - the formula
-            '',       # Column G - will be filled by formula result or manual
+            formula,    # Column F: The calculation
+            value_ref,  # Column G: The conditional check
             'Pending',
             'No'
         ]
@@ -237,20 +241,26 @@ def get_resolved_distances_from_sheet():
         return []
 
 def mark_distances_as_added(row_numbers):
-    """Mark rows in MatchedDistances sheet as added to pickle."""
+    """Mark rows in MatchedDistances sheet as added to pickle (Batch Update)."""
     try:
+        import gspread
         worksheet = get_matched_distances_sheet()
-        if not worksheet and row_numbers:
+        if not worksheet or not row_numbers:
             return False
         
-        # Update each row's "Added_To_Pickle" column
-        for row_num in row_numbers:
-            worksheet.update(f'I{row_num}', [['Yes']])
+        # Create a list of cell objects to update in one go
+        # Column 9 is Column 'I'
+        cells_to_update = [gspread.Cell(row=r, col=9, value='Yes') for r in row_numbers]
+        
+        # Send ALL updates in a single API call
+        worksheet.update_cells(cells_to_update)
         
         return True
     except Exception as e:
+        # Log the error to see if it's still failing
+        print(f"Error marking rows: {e}")
         return False
-
+        
 def update_distance_pickle_from_sheet():
     """
     Pull resolved distances from MatchedDistances sheet and update the distance pickle.

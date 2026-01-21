@@ -892,7 +892,8 @@ def load_city_normalization():
     The CSV contains:
     - variant: Different ways a city might be written (Arabic, English, typos)
     - canonical: The standard Arabic form we normalize to
-    - region: Geographic region (Eastern, Western, Central, etc.)
+    - region: Geographic region (5 macro-regions: Eastern, Western, Central, Northern, Southern)
+    - province: Official Saudi province (13 provinces, e.g., "Riyadh Province", "Eastern Province")
     
     Returns multiple lookup dictionaries for flexible matching.
     """
@@ -901,8 +902,10 @@ def load_city_normalization():
     variant_to_canonical = {}           # Exact match lookup
     variant_to_canonical_lower = {}     # Lowercase lookup for English names
     variant_to_canonical_aggressive = {} # Aggressive normalization (no spaces/punctuation)
-    variant_to_region = {}              # Variant -> Region mapping
-    canonical_to_region = {}            # Canonical -> Region mapping
+    variant_to_region = {}              # Variant -> Region mapping (5 regions)
+    canonical_to_region = {}            # Canonical -> Region mapping (5 regions)
+    variant_to_province = {}            # Variant -> Province mapping (13 provinces)
+    canonical_to_province = {}          # Canonical -> Province mapping (13 provinces)
     canonical_to_english = {}           # Canonical Arabic -> English display name
     
     if os.path.exists(norm_path):
@@ -913,6 +916,7 @@ def load_city_normalization():
                 variant = str(row['variant']).strip()
                 canonical = str(row['canonical']).strip()
                 region = row['region'] if pd.notna(row.get('region')) else None
+                province = row['province'] if pd.notna(row.get('province')) else None
 
                 variant_to_canonical[variant] = canonical
                 
@@ -926,10 +930,17 @@ def load_city_normalization():
                 if variant_aggressive:
                     variant_to_canonical_aggressive[variant_aggressive] = canonical
                 
+                # Region mappings (5 regions - for Index+Shrinkage fallback)
                 if region:
                     variant_to_region[variant] = region
                     if canonical not in canonical_to_region:
                         canonical_to_region[canonical] = region
+                
+                # Province mappings (13 provinces - for Blend model)
+                if province:
+                    variant_to_province[variant] = province
+                    if canonical not in canonical_to_province:
+                        canonical_to_province[canonical] = province
             
             # Build English display names from variants
             # Prefer title-case ASCII variants as English names
@@ -948,11 +959,13 @@ def load_city_normalization():
             st.error(f"Error reading normalization file: {e}")
             
     return (variant_to_canonical, variant_to_canonical_lower, variant_to_canonical_aggressive,
-            variant_to_region, canonical_to_region, canonical_to_english)
+            variant_to_region, canonical_to_region, variant_to_province, canonical_to_province,
+            canonical_to_english)
 
 # Load mappings
 (CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_CANONICAL_AGGRESSIVE,
- CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN) = load_city_normalization()
+ CITY_TO_REGION, CANONICAL_TO_REGION, CITY_TO_PROVINCE, CANONICAL_TO_PROVINCE,
+ CITY_AR_TO_EN) = load_city_normalization()
 CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 
 # ============================================
@@ -997,7 +1010,7 @@ def normalize_city(city_raw):
     return city, False
 
 def get_city_region(city):
-    """Get region for a city (checks both variant and canonical mappings)."""
+    """Get region for a city (checks both variant and canonical mappings). Returns 5-region value."""
     if city in CITY_TO_REGION:
         return CITY_TO_REGION[city]
     if city in CANONICAL_TO_REGION:
@@ -1006,6 +1019,18 @@ def get_city_region(city):
     canonical = CITY_TO_CANONICAL.get(city, city)
     if canonical in CANONICAL_TO_REGION:
         return CANONICAL_TO_REGION[canonical]
+    return None
+
+def get_city_province(city):
+    """Get province for a city (checks both variant and canonical mappings). Returns 13-province value."""
+    if city in CITY_TO_PROVINCE:
+        return CITY_TO_PROVINCE[city]
+    if city in CANONICAL_TO_PROVINCE:
+        return CANONICAL_TO_PROVINCE[city]
+    # Try normalizing first then looking up
+    canonical = CITY_TO_CANONICAL.get(city, city)
+    if canonical in CANONICAL_TO_PROVINCE:
+        return CANONICAL_TO_PROVINCE[canonical]
     return None
 
 def classify_unmatched_city(city_raw):
@@ -1247,63 +1272,91 @@ class IndexShrinkagePredictor:
         return result
 
 # ============================================
-# BLEND MODEL (New Lane Model - 0.7 Regional)
+# BLEND MODEL (New Lane Model - 0.7 Province)
 # Used for completely NEW lanes with NO historical data
-# Blends regional averages with city-level multipliers
+# Blends province-level averages with city-level multipliers
+# Uses 13 official Saudi provinces for more granular pricing
 # ============================================
 class BlendPredictor:
     """
-    Blend model (0.7 Regional + 0.3 City) for completely new lanes.
+    Blend model (0.7 Province + 0.3 City) for completely new lanes.
     
     For lanes with zero historical data, we estimate price by:
-    1. Regional CPK: Average CPK for the region pair (e.g., Eastern → Western)
+    1. Province CPK: Average CPK for the province pair (13 Saudi provinces)
+       e.g., "Riyadh Province" → "Eastern Province"
     2. City Multipliers: Pickup and destination city adjustment factors
     
-    Final: 70% Regional + 30% City-adjusted
+    Final: 70% Province + 30% City-adjusted
     
     This provides a reasonable estimate even for never-seen routes by
-    leveraging geographic patterns in freight pricing.
+    leveraging geographic patterns in freight pricing at the province level.
+    
+    Note: Falls back to 5-region model if province data not available.
     """
     
     def __init__(self, model_artifacts):
         m = model_artifacts
         self.config = m['config']
-        self.regional_weight = self.config.get('regional_weight', 0.7)  # 70% regional
+        self.province_weight = self.config.get('province_weight', self.config.get('regional_weight', 0.7))  # 70% province
         self.current_index = m['current_index']
         self.pickup_city_mult = m['pickup_city_mult']   # City-specific adjustments
         self.dest_city_mult = m['dest_city_mult']
-        self.city_to_region = m['city_to_region']       # City → Region mapping
-        self.regional_cpk = m['regional_cpk']           # (Region, Region) → CPK
+        
+        # Province mappings (13 provinces) - primary for Blend model
+        self.city_to_province = m.get('city_to_province', {})
+        self.province_cpk = m.get('province_cpk', {})
+        
+        # Region mappings (5 regions) - fallback for backward compatibility
+        self.city_to_region = m.get('city_to_region', {})
+        self.regional_cpk = m.get('regional_cpk', {})
+        
         self.model_date = self.config.get('training_date', 'Unknown')
+        
+        # Log model info for debugging
+        n_provinces = len(set(self.city_to_province.values())) if self.city_to_province else 0
+        n_regions = len(set(self.city_to_region.values())) if self.city_to_region else 0
+        self.using_provinces = n_provinces > 5  # True if we have 13 provinces, not 5 regions
     
     def predict(self, pickup_city, dest_city, distance_km=None):
-        # Get regions
+        # Get canonical names
         p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
         d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
         
-        p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can)
-        d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can)
+        # Try PROVINCE lookup first (13 provinces - more granular)
+        p_province = CANONICAL_TO_PROVINCE.get(p_can) or self.city_to_province.get(p_can) or self.city_to_province.get(pickup_city)
+        d_province = CANONICAL_TO_PROVINCE.get(d_can) or self.city_to_province.get(d_can) or self.city_to_province.get(dest_city)
         
-        # Fallback if no region found
-        if not p_region:
-            p_region = CANONICAL_TO_REGION.get(p_can)
-        if not d_region:
-            d_region = CANONICAL_TO_REGION.get(d_can)
+        province_cpk = None
+        if p_province and d_province:
+            province_cpk = self.province_cpk.get((p_province, d_province))
         
+        # If no province CPK found, try REGION fallback (5 regions)
         regional_cpk = None
-        if p_region and d_region:
-            regional_cpk = self.regional_cpk.get((p_region, d_region))
+        if province_cpk is None:
+            p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can) or self.city_to_region.get(pickup_city)
+            d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can) or self.city_to_region.get(dest_city)
+            
+            if p_region and d_region:
+                regional_cpk = self.regional_cpk.get((p_region, d_region))
         
-        # City Multipliers
+        # City Multipliers (30% weight)
         p_mult = self.pickup_city_mult.get(pickup_city, self.pickup_city_mult.get(p_can, 1.0))
         d_mult = self.dest_city_mult.get(dest_city, self.dest_city_mult.get(d_can, 1.0))
         city_cpk = p_mult * d_mult * self.current_index
         
-        if regional_cpk is not None:
-            predicted_cpk = self.regional_weight * regional_cpk + (1 - self.regional_weight) * city_cpk
-            method = f'Blend ({self.regional_weight:.0%} Regional)'
+        # Determine which geographic CPK to use
+        if province_cpk is not None:
+            # Use province-level (primary - 13 provinces)
+            predicted_cpk = self.province_weight * province_cpk + (1 - self.province_weight) * city_cpk
+            method = f'Blend ({self.province_weight:.0%} Province)'
+            confidence = 'Low'
+        elif regional_cpk is not None:
+            # Fallback to region-level (5 regions)
+            predicted_cpk = self.province_weight * regional_cpk + (1 - self.province_weight) * city_cpk
+            method = f'Blend ({self.province_weight:.0%} Regional)'
             confidence = 'Low'
         else:
+            # No geographic data - use city multipliers only
             predicted_cpk = city_cpk
             method = 'City Multipliers'
             confidence = 'Very Low'
@@ -1598,9 +1651,11 @@ def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None
     
     PRICING CASCADE (in order of preference):
     1. RECENCY: If recent loads exist (within RECENCY_WINDOW days), use median
-    2. INDEX+SHRINKAGE: If historical data exists, use Index+Shrinkage model
-    3. BLEND: If no lane data, use regional blend model (70% regional + 30% city)
-    4. DEFAULT: Last resort - use default CPK × distance
+    2. INDEX+SHRINKAGE: If ANY historical data exists for this lane, use Index+Shrinkage model
+    3. PROVINCE BLEND: For NEW lanes (no history), use 70% Province CPK + 30% City decomposition
+    4. REGIONAL BLEND: If Province Blend fails (missing province data), use 5-region CPK instead
+    5. CITY MULTIPLIERS: If no geographic data at all, use city multipliers only
+    6. DEFAULT: Last resort - use default CPK × distance
     
     Returns dict with buy_price, sell_price, model_used, confidence, etc.
     """
@@ -1616,15 +1671,16 @@ def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None
         model = 'Recency'
         conf = 'High' if recent_count >= 5 else ('Medium' if recent_count >= 2 else 'Low')
     elif index_shrink_predictor and index_shrink_predictor.has_lane_data(lane):
-        # 2. INDEX + SHRINKAGE: Lane has historical data but no recent loads
+        # 2. INDEX + SHRINKAGE: Lane has ANY historical data (even if not recent)
         p = index_shrink_predictor.predict(pickup_ar, dest_ar, distance_km)
         buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
     elif blend_predictor:
-        # 3. BLEND MODEL: Completely new lane, use regional + city estimates
+        # 3-5. BLEND MODEL: NEW lane with NO historical data
+        # Internally tries: Province CPK → Regional CPK → City Multipliers
         p = blend_predictor.predict(pickup_ar, dest_ar, distance_km)
         buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
     else:
-        # 4. DEFAULT: Last resort fallback
+        # 6. DEFAULT: Last resort fallback (no models available)
         buy_price = distance_km * 1.8 if distance_km else None
         model, conf = 'Default CPK', 'Very Low'
     
@@ -1769,7 +1825,12 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
 st.title("🚚 Freight Pricing Tool")
 model_status = []
 if index_shrink_predictor: model_status.append("✅ Index+Shrinkage")
-if blend_predictor: model_status.append("✅ Blend 0.7")
+if blend_predictor:
+    # Check if using provinces (13) or regions (5)
+    if blend_predictor.using_provinces:
+        model_status.append("✅ Blend 0.7 (Province)")
+    else:
+        model_status.append("✅ Blend 0.7 (Region)")
 dist_status = f"✅ {len(DISTANCE_MATRIX):,} distances" if DISTANCE_MATRIX else ""
 st.caption(f"ML-powered pricing | Domestic | {' | '.join(model_status)} | {dist_status}")
 

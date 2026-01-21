@@ -342,6 +342,82 @@ def get_resolved_distances_from_sheet():
     except Exception as e:
         return []
 
+def get_failed_distances_from_sheet():
+    """
+    Read FAILED distance lookups from the MatchedDistances sheet.
+    These are rows where Google Maps failed to find a distance (Column G has an error or invalid value).
+    
+    Returns list of dicts with row info for rows that need manual distance input.
+    """
+    # Common Google Sheets error values
+    ERROR_VALUES = {'#N/A', '#ERROR!', '#VALUE!', '#REF!', '#NAME?', '#DIV/0!', '#NULL!', 
+                    'Loading...', 'loading...', 'Error', 'error', 'N/A', 'n/a', ''}
+    
+    try:
+        worksheet = get_matched_distances_sheet()
+        if not worksheet:
+            return []
+        
+        all_data = worksheet.get_all_values()
+        failed = []
+        
+        for i, row in enumerate(all_data[1:], start=2):  # Skip header, track row number
+            # Need at least 5 columns (pickup_ar, dest_ar, pickup_en, dest_en)
+            if len(row) >= 5:
+                pickup_ar = row[1] if len(row) > 1 else ''
+                dest_ar = row[2] if len(row) > 2 else ''
+                pickup_en = row[3] if len(row) > 3 else ''
+                dest_en = row[4] if len(row) > 4 else ''
+                distance_value = row[6] if len(row) > 6 else ''  # Column G - Distance_Value
+                status = row[7] if len(row) > 7 else ''  # Column H - Status
+                added_to_pickle = row[8] if len(row) > 8 else 'No'  # Column I
+                
+                # Skip if already added to pickle
+                if added_to_pickle == 'Yes':
+                    continue
+                
+                # Skip if no city data
+                if not pickup_ar or not dest_ar:
+                    continue
+                
+                # Check if this is a failed lookup
+                dist_str = str(distance_value).strip()
+                is_failed = False
+                error_type = ''
+                
+                # Check for known error values
+                if dist_str in ERROR_VALUES or dist_str.startswith('#'):
+                    is_failed = True
+                    error_type = dist_str if dist_str else 'Empty'
+                else:
+                    # Try to parse as number - if it fails, it's an error
+                    try:
+                        dist_clean = dist_str.replace(',', '').replace(' km', '').replace('km', '').strip()
+                        dist_km = float(dist_clean)
+                        if dist_km <= 0:
+                            is_failed = True
+                            error_type = f'Invalid ({dist_km})'
+                    except (ValueError, TypeError):
+                        # Not a valid number - this is a failed lookup
+                        if dist_str:  # Only count as failed if there's some value (not just empty/pending)
+                            is_failed = True
+                            error_type = dist_str[:20] + '...' if len(dist_str) > 20 else dist_str
+                
+                if is_failed:
+                    failed.append({
+                        'row': i,
+                        'pickup_ar': pickup_ar,
+                        'dest_ar': dest_ar,
+                        'pickup_en': pickup_en,
+                        'dest_en': dest_en,
+                        'error_value': error_type,
+                        'status': status
+                    })
+        
+        return failed
+    except Exception as e:
+        return []
+
 def mark_distances_as_added(row_numbers):
     """Mark rows in MatchedDistances sheet as added to pickle (Batch Update)."""
     try:
@@ -2244,6 +2320,8 @@ with tab2:
         
         # Show count of pending distances
         resolved = get_resolved_distances_from_sheet()
+        
+        # Show resolved distances
         if resolved:
             st.success(f"✅ {len(resolved)} new distances ready to import")
             
@@ -2293,6 +2371,32 @@ with tab2:
                         if count > 0:
                             st.balloons()
                             st.cache_resource.clear()  # Clear cached data to reload
+                        
+                        # Check for failed lookups AFTER import
+                        failed = get_failed_distances_from_sheet()
+                        if failed:
+                            st.error(f"⚠️ {len(failed)} routes still have failed Google Maps lookups - manual input required!")
+                            st.warning("""
+                            **These routes could not be resolved by Google Maps API.** 
+                            Please manually enter distances in Column G of the MatchedDistances sheet.
+                            These rows will NOT be marked as 'Yes' until valid distances are provided.
+                            """)
+                            
+                            # Show failed lookups table
+                            failed_df = pd.DataFrame([
+                                {
+                                    'Row': f['row'],
+                                    'From (EN)': f['pickup_en'] or to_english_city(f['pickup_ar']),
+                                    'To (EN)': f['dest_en'] or to_english_city(f['dest_ar']),
+                                    'Error': f['error_value'],
+                                }
+                                for f in failed[:30]
+                            ])
+                            st.dataframe(failed_df, use_container_width=True, hide_index=True)
+                            if len(failed) > 30:
+                                st.caption(f"... and {len(failed) - 30} more")
+                            
+                            st.markdown("**💡 How to fix:** Open MatchedDistances sheet → Find rows above → Enter distance in Column G → Click 'Refresh Count'")
                     else:
                         st.error(message)
         

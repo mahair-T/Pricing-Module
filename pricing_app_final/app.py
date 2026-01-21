@@ -1400,6 +1400,26 @@ DISTANCE_LOOKUP = config.get('DISTANCE_LOOKUP', {})
 
 df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
 
+# ============================================
+# FILTER OUT BAD/INVALID CITY NAMES FROM HISTORICAL DATA
+# These are data quality issues that should not be treated as real cities
+# ============================================
+INVALID_CITY_NAMES = {
+    'Al Farwaniyah',  # Kuwait city, not Saudi Arabia
+    'Unknown',        # Placeholder/missing data
+    'unknown',
+    '',
+    None,
+    'N/A',
+    'n/a',
+    'NA',
+    'Murjan',         # Not a real city (district/neighborhood)
+}
+
+# Filter out rows with invalid cities
+df_knn = df_knn[~df_knn['pickup_city'].isin(INVALID_CITY_NAMES)]
+df_knn = df_knn[~df_knn['destination_city'].isin(INVALID_CITY_NAMES)]
+
 # Set of all cities with historical trip data
 VALID_CITIES_AR = set(df_knn['pickup_city'].unique()) | set(df_knn['destination_city'].unique())
 

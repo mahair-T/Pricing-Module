@@ -3007,18 +3007,35 @@ with tab2:
     # ============================================
     st.markdown("---")
     with st.expander("📏 Admin: Update Distances from Google Sheets"):
-        # Inject CSS to center Metrics text alignment
+        # Inject CSS to strictly force centering on Metric elements
         st.markdown("""
             <style>
+            /* Center the main metric container */
             div[data-testid="stMetric"] {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
                 text-align: center;
-                margin: auto;
+                width: 100%;
             }
+            /* Center the label (top text) */
             div[data-testid="stMetricLabel"] {
                 justify-content: center;
+                width: 100%;
+                margin: auto;
             }
+            /* Center the value (big number) */
             div[data-testid="stMetricValue"] {
                 justify-content: center;
+                width: 100%;
+                margin: auto;
+            }
+            /* Center the delta (arrow text) if present */
+            div[data-testid="stMetricDelta"] {
+                justify-content: center;
+                width: 100%;
+                margin: auto;
             }
             </style>
             """, unsafe_allow_html=True)

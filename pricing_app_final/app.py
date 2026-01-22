@@ -2260,7 +2260,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     return res
 
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, check_history=False,
-                       pickup_region_override=None, dest_region_override=None):
+                       pickup_region_override=None, dest_region_override=None, weight=None):
     """
     Lookup route stats for bulk pricing - uses batch logging (immediate_log=False).
     
@@ -2273,6 +2273,7 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
                       has historical data (for Master Grid)
         pickup_region_override: If provided, use this region for pickup (from coordinates)
         dest_region_override: If provided, use this region for destination (from coordinates)
+        weight: Weight in tons (optional, used for vehicle sizing logic)
     """
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
@@ -2290,14 +2291,18 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
                                dest_region_override=dest_region_override,
                                weight=weight)
     return {
-        'From': to_english_city(pickup_ar), 'To': to_english_city(dest_ar), 'Distance': int(dist) if dist else 0,
+        'From': to_english_city(pickup_ar), 
+        'To': to_english_city(dest_ar), 
+        'Vehicle': to_english_vehicle(vehicle_ar), 
+        'Weight_Tons': weight if weight else 25.0,
+        'Distance': int(dist) if dist else 0,
         'Distance_Source': dist_source,
         'Buy_Price': pricing['buy_price'], 'Rec_Sell': pricing['sell_price'],
         'Ref_Sell': pricing['ref_sell_price'], 'Ref_Sell_Src': pricing['ref_sell_source'],
         'Rental_Cost': pricing['rental_cost'], 'Margin': pricing['target_margin'],
         'Model': pricing['model_used'], 'Confidence': pricing['confidence'], 'Recent_N': pricing['recent_count']
     }
-
+                           
 # ============================================
 # APP UI
 # ============================================

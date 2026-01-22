@@ -2757,25 +2757,13 @@ with tab2:
     if 'bulk_results' in st.session_state and not st.session_state.bulk_results.empty:
         res_df = st.session_state.bulk_results
         st.markdown("---")
-        st.subheader("💾 Download & Cloud Upload")
+        st.subheader("Save 🚀")
         
-        # Download button
-        st.download_button(
-            "📥 Download Results CSV", 
-            res_df.to_csv(index=False), 
-            "pricing_results.csv", 
-            "text/csv", 
-            type="primary",
-            key="download_results_csv"
-        )
-        
-        st.markdown("---")
-        
-        # Cloud Upload with sheet naming
-        st.markdown("##### ☁️ Upload to Google Sheets")
         rfq_sheet_url = st.secrets.get('RFQ_url', '')
+        
         if rfq_sheet_url:
-            st.caption(f"Target Spreadsheet: RFQ Pricing Sheet")
+            # Hyperlinked text for the sheet
+            st.markdown(f"Target Spreadsheet: [**RFQ Pricing Sheet**]({rfq_sheet_url})")
             
             # Prompt for sheet name
             default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
@@ -2786,7 +2774,27 @@ with tab2:
                 key="rfq_sheet_name"
             )
             
-            if st.button("☁️ Upload to Google Sheet", type="secondary", key="upload_to_rfq"):
+            # Create two columns for the buttons to sit side-by-side
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Upload Button (Left)
+                upload_clicked = st.button("☁️ Upload to Google Sheet", type="secondary", key="upload_to_rfq", use_container_width=True)
+                
+            with col2:
+                # Download Button (Right) - Changed type to 'secondary' to match color and removed 'primary' (red)
+                st.download_button(
+                    "📥 Download Results CSV", 
+                    res_df.to_csv(index=False), 
+                    "pricing_results.csv", 
+                    "text/csv", 
+                    type="secondary",
+                    key="download_results_csv",
+                    use_container_width=True
+                )
+
+            # Upload Logic
+            if upload_clicked:
                 if not sheet_name or sheet_name.strip() == '':
                     st.error("Please enter a sheet name")
                 else:
@@ -2801,13 +2809,25 @@ with tab2:
                     
                     upload_progress.progress(1.0)
                     upload_status.empty()
+                    
                     if ok: 
                         st.success(msg)
+                        # Popup button to open the sheet directly
+                        st.link_button("🔗 Open Target Sheet", rfq_sheet_url, type="primary")
                     else: 
                         st.error(msg)
         else:
+            # Fallback if RFQ_url is not configured
             st.warning("RFQ_url not configured in secrets. Cloud upload unavailable.")
-
+            st.download_button(
+                "📥 Download Results CSV", 
+                res_df.to_csv(index=False), 
+                "pricing_results.csv", 
+                "text/csv", 
+                type="secondary",
+                key="download_results_csv",
+                use_container_width=True
+            )
     # ============================================
     # MASTER GRID GENERATOR
     # Generates pricing for all city-to-city combinations

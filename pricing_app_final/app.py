@@ -2595,6 +2595,21 @@ with tab2:
             with st.expander("📋 Preview"):
                 st.dataframe(r_df.head(10), use_container_width=True)
             
+            # --- NEW: Global Vehicle Selector ---
+            st.markdown("---")
+            st.markdown("##### 🔧 Bulk Settings")
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                # Checkbox to enable the override
+                use_global_vehicle = st.checkbox("Apply single vehicle to all?", help="If checked, this vehicle type will be used for ALL rows, ignoring the CSV column.")
+            with c2:
+                # Selectbox for the vehicle type (enabled only if checkbox is checked)
+                # Default to Flatbed Trailer if available
+                def_idx = vehicle_types_en.index('Flatbed Trailer') if 'Flatbed Trailer' in vehicle_types_en else 0
+                global_vehicle = st.selectbox("Select Vehicle Type", options=vehicle_types_en, index=def_idx, disabled=not use_global_vehicle, label_visibility="collapsed")
+            st.markdown("---")
+            # ------------------------------------
+
             if st.button("🔍 Look Up All Routes", type="primary", use_container_width=True):
                 res = []
                 unmat_cities = []  # Unmatched cities
@@ -2625,10 +2640,17 @@ with tab2:
                             except ValueError:
                                 pass
                     
-                    # Column 4: Vehicle Type (optional)
-                    v_raw = ''
-                    if len(row) > 3:
-                        v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
+                    # --- UPDATED: Vehicle Type Logic ---
+                    if use_global_vehicle:
+                        # Use the global selection
+                        v_ar = to_arabic_vehicle(global_vehicle)
+                    else:
+                        # Use CSV Column 4 (optional)
+                        v_raw = ''
+                        if len(row) > 3:
+                            v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
+                        v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
+                    # -----------------------------------
                     
                     # Columns 5-8: Lat/Lon coordinates (optional)
                     pickup_lat, pickup_lon, dropoff_lat, dropoff_lon = None, None, None, None
@@ -2665,7 +2687,8 @@ with tab2:
                                 dropoff_lon = float(str(val).strip())
                         except (ValueError, TypeError):
                             pass
-                    
+
+                    # Parse Weight (Column 9 / Index 8)
                     weight_val = None
                     if len(row) > 8:
                         try:
@@ -2737,8 +2760,6 @@ with tab2:
                             'detected_region': dropoff_region
                         })
                     
-                    v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
-                    
                     # Log to Bulk Adjustments sheet if user provided distance or coordinates
                     if user_provided_distance or user_provided_coords:
                         log_bulk_adjustment(
@@ -2758,7 +2779,7 @@ with tab2:
                             dropoff_region=dropoff_region
                         )
                     
-                    # Pass distance override and regions to lookup function
+                    # Pass distance override, regions and weight to lookup function
                     route_result = lookup_route_stats(
                         p_ar, d_ar, v_ar, 
                         dist_override=dist_override,
@@ -2802,7 +2823,7 @@ with tab2:
                     st.caption(f"📋 Logged {adj_count} user-provided adjustments for review")
                     
         except Exception as e: st.error(f"Error: {e}")
-
+            
     # Results Display (Outside indentation so it persists)
     if 'bulk_results' in st.session_state and not st.session_state.bulk_results.empty:
         res_df = st.session_state.bulk_results

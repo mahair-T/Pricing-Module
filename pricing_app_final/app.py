@@ -3099,7 +3099,24 @@ with tab2:
         with col2:
             if st.button("🔍 Refresh Count"):
                 st.rerun()
-
+        
+        st.markdown("---")
+        st.caption("💾 **Save Changes Permanently**")
+        st.info("Since this app runs in the cloud, file updates are lost on reboot. Download the updated pickle below and commit it to your Git repository to make changes permanent.")
+        
+        # Read the current file from memory/disk for download
+        pkl_path = os.path.join(APP_DIR, 'model_export', 'distance_matrix.pkl')
+        if os.path.exists(pkl_path):
+            with open(pkl_path, 'rb') as f:
+                pkl_data = f.read()
+                
+            st.download_button(
+                label="📥 Download Updated .pkl (For Git Commit)",
+                data=pkl_data,
+                file_name="distance_matrix.pkl",
+                mime="application/octet-stream",
+                use_container_width=True
+            )
 st.markdown("---")
 # ERROR LOG SECTION (Restored to exact snippet)
 error_log_csv = get_error_log_csv()

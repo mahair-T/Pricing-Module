@@ -3018,19 +3018,73 @@ with tab2:
         m2.metric("Failed Lookups", len(failed), delta_color="inverse" if len(failed) > 0 else "off", help="Routes Google couldn't find")
         m3.metric("Current Pickle Size", f"{len(DISTANCE_MATRIX):,}", help="Total distances currently in memory")
         
+        # 2. Detailed Data Views (Tabs)
+        if resolved or failed:
+            st.markdown("#### 📋 Details")
+            t1, t2 = st.tabs(["✅ Ready to Import", "⚠️ Failed Lookups"])
+            
+            with t1:
+                if resolved:
+                    st.caption("These distances will be added to your local database.")
+                    preview_df = pd.DataFrame([
+                        {'From': to_english_city(r['pickup_ar']), 
+                            'To': to_english_city(r['dest_ar']), 
+                            'Distance': f"{r['distance_km']} km",
+                            'Source': '✏️ User' if r.get('is_suggestion') else '🌐 API',
+                            'Row': r['row']}
+                        for r in resolved
+                    ])
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No pending distances to import.")
+
+            with t2:
+                if failed:
+                    st.warning("These routes failed API lookup. Please manually enter distances in Column G of the Sheet.")
+                    failed_df = pd.DataFrame([
+                        {'Row': f['row'],
+                            'From': f['pickup_en'] or to_english_city(f['pickup_ar']),
+                            'To': f['dest_en'] or to_english_city(f['dest_ar']),
+                            'Error': f['error_value']}
+                        for f in failed
+                    ])
+                    st.dataframe(failed_df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("No failed lookups! All clean.")
+
         st.markdown("---")
         
-        # 2. Action Buttons (Primary Actions)
-        c1, c2 = st.columns([1, 1])
+        # 3. Actions Area (Save & Sync)
+        st.markdown("##### 💾 Save & Sync")
+        
+        c1, c2, c3 = st.columns(3)
+        
         with c1:
-            import_clicked = st.button("🔄 Import Distances to Pickle", type="primary", disabled=len(resolved)==0, use_container_width=True)
-        with c2:
             refresh_clicked = st.button("🔍 Refresh Sheet Data", use_container_width=True)
+
+        with c2:
+            import_clicked = st.button("🔄 Import to Pickle", type="primary", disabled=len(resolved)==0, use_container_width=True)
+            
+        with c3:
+            # Read the current file from memory/disk for download
+            pkl_path = os.path.join(APP_DIR, 'model_export', 'distance_matrix.pkl')
+            if os.path.exists(pkl_path):
+                with open(pkl_path, 'rb') as f:
+                    pkl_data = f.read()
+                    
+                st.download_button(
+                    label="📥 Download .pkl",
+                    data=pkl_data,
+                    file_name="distance_matrix.pkl",
+                    mime="application/octet-stream",
+                    use_container_width=True,
+                    type="secondary"
+                )
 
         if refresh_clicked:
             st.rerun()
 
-        # 3. Import Logic (Preserved)
+        # Import Logic (Preserved from previous versions)
         if import_clicked:
             with st.spinner("Importing distances..."):
                 success, count, message = update_distance_pickle_from_sheet()
@@ -3046,64 +3100,6 @@ with tab2:
                         st.error(f"⚠️ {len(failed_now)} routes still have failed Google Maps lookups.")
                 else:
                     st.error(message)
-
-        # 4. Detailed Data Views (Tabs)
-        if resolved or failed:
-            st.markdown("#### 📋 Details")
-            t1, t2 = st.tabs(["✅ Ready to Import", "⚠️ Failed Lookups"])
-            
-            with t1:
-                if resolved:
-                    st.caption("These distances will be added to your local database.")
-                    preview_df = pd.DataFrame([
-                        {'From': to_english_city(r['pickup_ar']), 
-                         'To': to_english_city(r['dest_ar']), 
-                         'Distance': f"{r['distance_km']} km",
-                         'Source': '✏️ User' if r.get('is_suggestion') else '🌐 API',
-                         'Row': r['row']}
-                        for r in resolved
-                    ])
-                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No pending distances to import.")
-
-            with t2:
-                if failed:
-                    st.warning("These routes failed API lookup. Please manually enter distances in Column G of the Sheet.")
-                    failed_df = pd.DataFrame([
-                        {'Row': f['row'],
-                         'From': f['pickup_en'] or to_english_city(f['pickup_ar']),
-                         'To': f['dest_en'] or to_english_city(f['dest_ar']),
-                         'Error': f['error_value']}
-                        for f in failed
-                    ])
-                    st.dataframe(failed_df, use_container_width=True, hide_index=True)
-                else:
-                    st.success("No failed lookups! All clean.")
-
-        # 5. Permanent Save Section
-        st.markdown("---")
-        st.subheader("💾 Save Changes Permanently")
-        
-        col_info, col_dl = st.columns([2, 1])
-        with col_info:
-            st.info("updates are lost on reboot. Download the updated `.pkl` and commit it to Git.")
-        
-        with col_dl:
-            # Read the current file from memory/disk for download
-            pkl_path = os.path.join(APP_DIR, 'model_export', 'distance_matrix.pkl')
-            if os.path.exists(pkl_path):
-                with open(pkl_path, 'rb') as f:
-                    pkl_data = f.read()
-                    
-                st.download_button(
-                    label="📥 Download .pkl",
-                    data=pkl_data,
-                    file_name="distance_matrix.pkl",
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                    type="secondary"
-                )
                     
 # ERROR LOG SECTION (Restored to exact snippet)
 error_log_csv = get_error_log_csv()

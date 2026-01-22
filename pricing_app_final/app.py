@@ -1157,6 +1157,58 @@ def upload_to_rfq_sheet(df, sheet_name, batch_size=500, progress_callback=None):
     except Exception as e:
         return False, f"❌ Upload error: {str(e)}"
 
+def populate_rfq_template_sheet(template_df):
+    """
+    Populate the 'Template' sheet in the RFQ spreadsheet with template data.
+    
+    Creates the sheet if it doesn't exist, or clears and repopulates if it does.
+    
+    Args:
+        template_df: DataFrame containing the template structure
+    
+    Returns:
+        (success, message) tuple
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return False, "❌ Google Cloud credentials not found. Check secrets configuration."
+        
+        rfq_url = st.secrets.get('RFQ_url')
+        if not rfq_url:
+            return False, "❌ RFQ_url not configured in secrets."
+        
+        try:
+            spreadsheet = client.open_by_url(rfq_url)
+        except Exception as e:
+            return False, f"❌ Failed to open RFQ spreadsheet: {str(e)}"
+        
+        # Check if Template sheet exists
+        existing_sheets = [ws.title for ws in spreadsheet.worksheets()]
+        
+        if 'Template' in existing_sheets:
+            # Get existing sheet and clear it
+            wks = spreadsheet.worksheet('Template')
+            wks.clear()
+        else:
+            # Create new Template sheet
+            wks = spreadsheet.add_worksheet(title='Template', rows=100, cols=10)
+        
+        # Write headers and data
+        headers = template_df.columns.values.tolist()
+        data_rows = template_df.astype(str).values.tolist()
+        
+        # Replace 'nan' with empty string
+        data_rows = [['' if cell == 'nan' else cell for cell in row] for row in data_rows]
+        
+        # Write all data at once (header + data)
+        all_data = [headers] + data_rows
+        wks.update('A1', all_data)
+        
+        return True, "✅ Template sheet updated successfully!"
+    except Exception as e:
+        return False, f"❌ Error updating template: {str(e)}"
+
 # ============================================
 # FIXED SETTINGS
 # ============================================
@@ -2433,16 +2485,30 @@ with tab2:
     - Target Margin, Backhaul Probability
     - Model Used, Confidence, Recent Count
     """)
-    st.download_button("📥 Template", pd.DataFrame({
-        'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
-        'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
-        'Distance': ['', '', '450'],
-        'Vehicle_Type': ['Flatbed Trailer', '', ''],
-        'Pickup_Lat': ['', '', '24.7136'],
-        'Pickup_Lon': ['', '', '46.6753'],
-        'Dropoff_Lat': ['', '', '21.4858'],
-        'Dropoff_Lon': ['', '', '39.1925']
-    }).to_csv(index=False), "template.csv", "text/csv")
+    
+    # Template button - populates Template sheet in RFQ spreadsheet
+    if st.button("📋 Open Template in Google Sheets", help="Opens/updates the Template sheet in the RFQ spreadsheet"):
+        template_df = pd.DataFrame({
+            'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
+            'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
+            'Distance': ['', '', '450'],
+            'Vehicle_Type': ['Flatbed Trailer', '', ''],
+            'Pickup_Lat': ['', '', '24.7136'],
+            'Pickup_Lon': ['', '', '46.6753'],
+            'Dropoff_Lat': ['', '', '21.4858'],
+            'Dropoff_Lon': ['', '', '39.1925']
+        })
+        
+        success, msg = populate_rfq_template_sheet(template_df)
+        if success:
+            rfq_url = st.secrets.get('RFQ_url', '')
+            st.success(msg)
+            if rfq_url:
+                # Create a direct link to the Template sheet
+                base_url = rfq_url.split('/edit')[0]
+                st.markdown(f"[🔗 Open Template Sheet]({base_url}/edit#gid=0)")
+        else:
+            st.error(msg)
     
     upl = st.file_uploader("Upload CSV", type=['csv'])
     if upl:

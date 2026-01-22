@@ -3055,9 +3055,11 @@ with tab2:
         st.markdown("---")
         
         # 3. Actions Area (Save & Sync)
-        st.markdown("##### 💾 Save & Sync")
+        # Center the header using HTML
+        st.markdown("<h5 style='text-align: center;'>💾 Save & Sync</h5>", unsafe_allow_html=True)
         
-        c1, c2, c3 = st.columns(3)
+        # Center the buttons using spacer columns: [spacer, btn, btn, btn, spacer]
+        _, c1, c2, c3, _ = st.columns([1, 2, 2, 2, 1])
         
         with c1:
             refresh_clicked = st.button("🔍 Refresh Sheet Data", use_container_width=True)

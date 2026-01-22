@@ -3001,18 +3001,30 @@ with tab2:
                 "text/csv"
             )
     
-    # ============================================
+# ============================================
     # DISTANCE UPDATE FROM GOOGLE SHEETS
     # Pull resolved distances from MatchedDistances sheet
     # ============================================
     st.markdown("---")
     with st.expander("📏 Admin: Update Distances from Google Sheets"):
+        # Inject CSS to center Metrics and general text
+        st.markdown("""
+            <style>
+            [data-testid="stMetricValue"] {
+                justify-content: center;
+            }
+            [data-testid="stMetricLabel"] {
+                justify-content: center;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
         # 1. Dashboard Metrics
-        # Fetch data first to populate metrics
         resolved = get_resolved_distances_from_sheet()
         failed = get_failed_distances_from_sheet()
         
-        st.markdown("### 📊 Status Dashboard")
+        st.markdown("<h3 style='text-align: center;'>📊 Status Dashboard</h3>", unsafe_allow_html=True)
+        
         m1, m2, m3 = st.columns(3)
         m1.metric("Ready to Import", len(resolved), help="Distances found in Sheet ready to be added")
         m2.metric("Failed Lookups", len(failed), delta_color="inverse" if len(failed) > 0 else "off", help="Routes Google couldn't find")
@@ -3020,12 +3032,12 @@ with tab2:
         
         # 2. Detailed Data Views (Tabs)
         if resolved or failed:
-            st.markdown("#### 📋 Details")
+            st.markdown("<h4 style='text-align: center;'>📋 Details</h4>", unsafe_allow_html=True)
             t1, t2 = st.tabs(["✅ Ready to Import", "⚠️ Failed Lookups"])
             
             with t1:
                 if resolved:
-                    st.caption("These distances will be added to your local database.")
+                    st.markdown("<p style='text-align: center; color: gray;'>These distances will be added to your local database.</p>", unsafe_allow_html=True)
                     preview_df = pd.DataFrame([
                         {'From': to_english_city(r['pickup_ar']), 
                             'To': to_english_city(r['dest_ar']), 
@@ -3040,7 +3052,7 @@ with tab2:
 
             with t2:
                 if failed:
-                    st.warning("These routes failed API lookup. Please manually enter distances in Column G of the Sheet.")
+                    st.markdown("<p style='text-align: center; color: orange;'>These routes failed API lookup. Please manually enter distances in Column G of the Sheet.</p>", unsafe_allow_html=True)
                     failed_df = pd.DataFrame([
                         {'Row': f['row'],
                             'From': f['pickup_en'] or to_english_city(f['pickup_ar']),
@@ -3055,10 +3067,9 @@ with tab2:
         st.markdown("---")
         
         # 3. Actions Area (Save & Sync)
-        # Center the header using HTML
         st.markdown("<h5 style='text-align: center;'>💾 Save & Sync</h5>", unsafe_allow_html=True)
         
-        # Center the buttons using spacer columns: [spacer, btn, btn, btn, spacer]
+        # Center buttons using spacer columns
         _, c1, c2, c3, _ = st.columns([1, 2, 2, 2, 1])
         
         with c1:
@@ -3086,7 +3097,7 @@ with tab2:
         if refresh_clicked:
             st.rerun()
 
-        # Import Logic (Preserved from previous versions)
+        # Import Logic (Preserved)
         if import_clicked:
             with st.spinner("Importing distances..."):
                 success, count, message = update_distance_pickle_from_sheet()

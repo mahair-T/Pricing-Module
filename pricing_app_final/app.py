@@ -2666,6 +2666,15 @@ with tab2:
                         except (ValueError, TypeError):
                             pass
                     
+                    weight_val = None
+                    if len(row) > 8:
+                        try:
+                            val = row.iloc[8]
+                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                weight_val = float(str(val).strip())
+                        except (ValueError, TypeError):
+                            pass
+                    
                     # Check if user provided any coordinates
                     if pickup_lat is not None or pickup_lon is not None or dropoff_lat is not None or dropoff_lon is not None:
                         user_provided_coords = True
@@ -2754,7 +2763,8 @@ with tab2:
                         p_ar, d_ar, v_ar, 
                         dist_override=dist_override,
                         pickup_region_override=pickup_region,
-                        dest_region_override=dropoff_region
+                        dest_region_override=dropoff_region,
+                        weight=weight_val
                     )
                     
                     # Track missing distances

@@ -1478,10 +1478,14 @@ VEHICLE_TYPE_EN = {
     'تريلا ستائر': 'Curtain Trailer',
     'تريلا مقفول': 'Closed Trailer',
     'تريلا ثلاجة': 'Refrigerated Trailer',
+    'سطحة': 'Lowbed Trailer',     # Added Arabic for Lowbed
     'Lowbed Trailer': 'Lowbed Trailer',
+    'دينا': 'Dynna',              # New
+    'لوري': 'Lorries',            # New
     'Unknown': 'Unknown',
 }
 VEHICLE_TYPE_AR = {v: k for k, v in VEHICLE_TYPE_EN.items()}
+
 DEFAULT_VEHICLE_AR = 'تريلا فرش'
 DEFAULT_VEHICLE_EN = 'Flatbed Trailer'
 
@@ -1887,6 +1891,62 @@ vehicle_types_en = sorted(set(VEHICLE_TYPE_EN.values()))
 commodities = sorted(set([to_english_commodity(c) for c in df_knn['commodity'].unique()]))
 
 # ============================================
+# PRICING RULES & MODIFIERS
+# ============================================
+def is_core_lane(pickup_ar, dest_ar):
+    """Check if lane is between main hubs (Core Lane)."""
+    # Main hubs in Arabic
+    CORE_CITIES = {'الرياض', 'جدة', 'الدمام'}
+    
+    # Normalize to ensure matching
+    p_can = CITY_TO_CANONICAL.get(pickup_ar, pickup_ar)
+    d_can = CITY_TO_CANONICAL.get(dest_ar, dest_ar)
+    
+    return (p_can in CORE_CITIES) and (d_can in CORE_CITIES)
+
+def apply_vehicle_rules(base_price, vehicle_en, is_core, weight_tons=None):
+    """
+    Apply specific pricing rules based on Flatbed baseline.
+    Rules:
+    1. Flatbed = Baseline
+    2. Curtain = +100
+    3. Reefer = x1.25
+    4. Lowbed = x1.85 (non-core) / x2.2 (core)
+    5. Dynna = x0.7 (small) / x0.77 (large > 4T)
+    6. Lorries = x0.85
+    7. Closed = +50 (<=600), +100 (600-2000), +150 (>2000)
+    """
+    if not base_price: return None
+    
+    v = vehicle_en.lower()
+    
+    if 'curtain' in v:
+        return base_price + 100
+        
+    elif 'refrigerated' in v or 'reefer' in v:
+        return base_price * 1.25
+        
+    elif 'lowbed' in v:
+        multiplier = 2.2 if is_core else 1.85
+        return base_price * multiplier
+        
+    elif 'dynna' in v:
+        # Threshold: 4 tons to distinguish small vs large
+        multiplier = 0.77 if (weight_tons and weight_tons > 4.0) else 0.70
+        return base_price * multiplier
+        
+    elif 'lorries' in v or 'lorry' in v:
+        return base_price * 0.85
+        
+    elif 'closed' in v:
+        if base_price <= 600: return base_price + 50
+        elif base_price <= 2000: return base_price + 100
+        else: return base_price + 150
+        
+    # Default / Flatbed
+    return base_price
+
+# ============================================
 # PRICING LOGIC
 # Core pricing cascade: Recency → Index+Shrinkage → Blend → Default
 # ============================================
@@ -2028,45 +2088,42 @@ def round_to_nearest(value, nearest):
     """Round value to nearest multiple (e.g., 100 for buy price, 50 for sell price)."""
     return int(round(value / nearest) * nearest) if value and not pd.isna(value) else None
 
-def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None,
-                     pickup_region_override=None, dest_region_override=None):
+def calculate_prices(pickup_ar, dest_ar, requested_vehicle_ar, distance_km, lane_data=None, 
+                     pickup_region_override=None, dest_region_override=None, weight=None):
     """
-    Calculate buy/sell prices using the pricing cascade.
+    Calculate price starting with Flatbed Baseline -> Apply Vehicle Modifiers.
     
-    PRICING CASCADE (in order of preference):
+    PRICING CASCADE (Run on Flatbed Data):
     1. RECENCY: If recent loads exist (within RECENCY_WINDOW days), use median
     2. INDEX+SHRINKAGE: If ANY historical data exists for this lane, use Index+Shrinkage model
     3. PROVINCE BLEND: For NEW lanes (no history), use 70% Province CPK + 30% City decomposition
     4. REGIONAL BLEND: If Province Blend fails (missing province data), use 5-region CPK instead
     5. CITY MULTIPLIERS: If no geographic data at all, use city multipliers only
     6. DEFAULT: Last resort - use default CPK × distance
-    
-    Args:
-        pickup_ar: Pickup city in Arabic
-        dest_ar: Destination city in Arabic
-        vehicle_ar: Vehicle type in Arabic
-        distance_km: Distance in km
-        lane_data: Optional pre-filtered lane data
-        pickup_region_override: Optional region override from coordinates
-        dest_region_override: Optional region override from coordinates
-    
-    Returns dict with buy_price, sell_price, model_used, confidence, etc.
     """
     lane = f"{pickup_ar} → {dest_ar}"
-    if lane_data is None: lane_data = df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == vehicle_ar)].copy()
     
-    recent_count = len(lane_data[lane_data['days_ago'] <= RECENCY_WINDOW])
+    # 1. FORCE FLATBED DATA for the Baseline calculation
+    # We ignore the requested vehicle's historical data for the pricing model
+    # to ensure we follow the "Flatbed as Baseline" rule strictly.
+    flatbed_data = df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == DEFAULT_VEHICLE_AR)].copy()
     
-    # PRICING CASCADE
+    # Calculate BASELINE (Flatbed) Price
+    recent_count = len(flatbed_data[flatbed_data['days_ago'] <= RECENCY_WINDOW])
+    
+    # --- PRICING CASCADE (Run on Flatbed Data) ---
     if recent_count >= 1:
         # 1. RECENCY MODEL: Use median of recent loads
-        buy_price = lane_data[lane_data['days_ago'] <= RECENCY_WINDOW]['total_carrier_price'].median()
-        model = 'Recency'
+        base_price = flatbed_data[flatbed_data['days_ago'] <= RECENCY_WINDOW]['total_carrier_price'].median()
+        model = 'Recency (Base)'
         conf = 'High' if recent_count >= 5 else ('Medium' if recent_count >= 2 else 'Low')
+        
     elif index_shrink_predictor and index_shrink_predictor.has_lane_data(lane):
         # 2. INDEX + SHRINKAGE: Lane has ANY historical data (even if not recent)
+        # Uses Flatbed historical stats inside the model
         p = index_shrink_predictor.predict(pickup_ar, dest_ar, distance_km)
-        buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
+        base_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
+        
     elif blend_predictor:
         # 3-5. BLEND MODEL: NEW lane with NO historical data
         # Internally tries: Province CPK → Regional CPK → City Multipliers
@@ -2074,27 +2131,45 @@ def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None
         p = blend_predictor.predict(pickup_ar, dest_ar, distance_km,
                                     pickup_region_override=pickup_region_override,
                                     dest_region_override=dest_region_override)
-        buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
+        base_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
+        
     else:
         # 6. DEFAULT: Last resort fallback (no models available)
-        buy_price = distance_km * 1.8 if distance_km else None
+        base_price = distance_km * 1.8 if distance_km else None
         model, conf = 'Default CPK', 'Very Low'
+
+    # 2. APPLY VEHICLE MODIFIERS
+    # Determine English name for logic check
+    vehicle_en = to_english_vehicle(requested_vehicle_ar)
+    is_core = is_core_lane(pickup_ar, dest_ar)
     
-    # Round buy price to nearest 100 SAR
-    buy_rounded = round_to_nearest(buy_price, 100)
+    final_buy_price = apply_vehicle_rules(base_price, vehicle_en, is_core, weight)
     
-    # Calculate sell price based on backhaul probability
+    # Rounding
+    buy_rounded = round_to_nearest(final_buy_price, 100)
+    
+    # Calculate sell price (Margin logic)
     bh_prob, margin, bh_ratio = get_backhaul_probability(dest_ar)
     sell_rounded = round_to_nearest(buy_rounded * (1 + margin), 50) if buy_rounded else None
     
-    # Get reference sell price from historical shipper prices
-    ref_sell, ref_src = calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, sell_rounded)
+    # Get reference sell (Visual only - using original requested vehicle data if available)
+    # We pass the ORIGINAL lane_data (if provided) to show history for the actual requested truck
+    req_lane_data = lane_data if lane_data is not None else df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == requested_vehicle_ar)].copy()
+    ref_sell, ref_src = calculate_reference_sell(pickup_ar, dest_ar, requested_vehicle_ar, req_lane_data, sell_rounded)
     
     return {
-        'buy_price': buy_rounded, 'sell_price': sell_rounded, 'ref_sell_price': round_to_nearest(ref_sell, 50),
-        'ref_sell_source': ref_src, 'rental_cost': calculate_rental_cost(distance_km),
-        'target_margin': f"{margin:.0%}", 'backhaul_probability': bh_prob, 'backhaul_ratio': round(bh_ratio, 2) if bh_ratio else None,
-        'model_used': model, 'confidence': conf, 'recent_count': recent_count
+        'buy_price': buy_rounded, 
+        'sell_price': sell_rounded, 
+        'base_flatbed_price': base_price,  # Helpful for debug
+        'ref_sell_price': round_to_nearest(ref_sell, 50),
+        'ref_sell_source': ref_src, 
+        'rental_cost': calculate_rental_cost(distance_km),
+        'target_margin': f"{margin:.0%}", 
+        'backhaul_probability': bh_prob, 
+        'backhaul_ratio': round(bh_ratio, 2) if bh_ratio else None,
+        'model_used': f"{model} + {vehicle_en} Rule", 
+        'confidence': conf, 
+        'recent_count': recent_count
     }
 
 def select_spaced_samples(df, n_samples):
@@ -2158,7 +2233,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     dist, dist_src = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=True)
     if dist == 0: dist, dist_src = 500, 'Default'
     
-    pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data)
+    ppricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data, weight=weight)
     
     res = {
         'Vehicle_Type': to_english_vehicle(vehicle_ar), 'Commodity': to_english_commodity(commodity),
@@ -2212,7 +2287,8 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
     
     pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data,
                                pickup_region_override=pickup_region_override,
-                               dest_region_override=dest_region_override)
+                               dest_region_override=dest_region_override,
+                               weight=weight)
     return {
         'From': to_english_city(pickup_ar), 'To': to_english_city(dest_ar), 'Distance': int(dist) if dist else 0,
         'Distance_Source': dist_source,

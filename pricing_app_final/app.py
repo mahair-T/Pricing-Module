@@ -3001,19 +3001,23 @@ with tab2:
                 "text/csv"
             )
     
-# ============================================
+    # ============================================
     # DISTANCE UPDATE FROM GOOGLE SHEETS
     # Pull resolved distances from MatchedDistances sheet
     # ============================================
     st.markdown("---")
     with st.expander("📏 Admin: Update Distances from Google Sheets"):
-        # Inject CSS to center Metrics and general text
+        # Inject CSS to center Metrics text alignment
         st.markdown("""
             <style>
-            [data-testid="stMetricValue"] {
+            div[data-testid="stMetric"] {
+                text-align: center;
+                margin: auto;
+            }
+            div[data-testid="stMetricLabel"] {
                 justify-content: center;
             }
-            [data-testid="stMetricLabel"] {
+            div[data-testid="stMetricValue"] {
                 justify-content: center;
             }
             </style>
@@ -3025,7 +3029,10 @@ with tab2:
         
         st.markdown("<h3 style='text-align: center;'>📊 Status Dashboard</h3>", unsafe_allow_html=True)
         
-        m1, m2, m3 = st.columns(3)
+        # Use spacers to center the 3 metrics in the middle of the screen
+        # Layout: [spacer, metric, metric, metric, spacer]
+        _, m1, m2, m3, _ = st.columns([1, 2, 2, 2, 1])
+        
         m1.metric("Ready to Import", len(resolved), help="Distances found in Sheet ready to be added")
         m2.metric("Failed Lookups", len(failed), delta_color="inverse" if len(failed) > 0 else "off", help="Routes Google couldn't find")
         m3.metric("Current Pickle Size", f"{len(DISTANCE_MATRIX):,}", help="Total distances currently in memory")

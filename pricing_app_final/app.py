@@ -3056,12 +3056,14 @@ with tab2:
         
         # 2. Detailed Data Views (Tabs)
         if resolved or failed:
-            st.markdown("<h4 style='text-align: center;'>📋 Details</h4>", unsafe_allow_html=True)
+            # DETAILS: Left-aligned
+            st.markdown("<h4 style='text-align: left;'>📋 Details</h4>", unsafe_allow_html=True)
             t1, t2 = st.tabs(["✅ Ready to Import", "⚠️ Failed Lookups"])
             
             with t1:
                 if resolved:
-                    st.markdown("<p style='text-align: center; color: gray;'>These distances will be added to your local database.</p>", unsafe_allow_html=True)
+                    # Description: Left-aligned
+                    st.markdown("<p style='text-align: left; color: gray;'>These distances will be added to your local database.</p>", unsafe_allow_html=True)
                     preview_df = pd.DataFrame([
                         {'From': to_english_city(r['pickup_ar']), 
                             'To': to_english_city(r['dest_ar']), 
@@ -3076,7 +3078,8 @@ with tab2:
 
             with t2:
                 if failed:
-                    st.markdown("<p style='text-align: center; color: orange;'>These routes failed API lookup. Please manually enter distances in Column G of the Sheet.</p>", unsafe_allow_html=True)
+                    # Description: Left-aligned
+                    st.markdown("<p style='text-align: left; color: orange;'>These routes failed API lookup. Please manually enter distances in Column G of the Sheet.</p>", unsafe_allow_html=True)
                     failed_df = pd.DataFrame([
                         {'Row': f['row'],
                             'From': f['pickup_en'] or to_english_city(f['pickup_ar']),

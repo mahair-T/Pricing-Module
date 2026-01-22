@@ -6,6 +6,7 @@ import pickle
 import os
 import io
 import re
+import json
 from datetime import datetime
 import itertools 
 
@@ -22,6 +23,118 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # MASTER GRID SHEET URL
 BULK_PRICING_SHEET_URL = "https://docs.google.com/spreadsheets/d/1u4qyqE626mor0OV1JHYO2Ejd5chmPy3wi1P0AWdhLPw/edit?gid=0#gid=0"
 BULK_TAB_NAME = "All Lanes"
+
+# ============================================
+# PROVINCE TO REGION MAPPING
+# Maps Saudi Arabia's 13 official provinces to 5 freight regions
+# ============================================
+GEOJSON_PROVINCE_TO_STANDARD = {
+    'Ash Sharqiyah': 'Eastern Province',
+    'Al Hudud ash Shamaliyah': 'Northern Borders Province',
+    'Al Jawf': 'Al Jouf Province',
+    'Al Madinah': 'Madinah Province',
+    'Al Quassim': 'Qassim Province',
+    'Ar Riyad': 'Riyadh Province',
+    "Ha'il": 'Hail Province',
+    'Jizan': 'Jazan Province',
+    'Makkah': 'Makkah Province',
+    'Najran': 'Najran Province',
+    'Tabuk': 'Tabuk Province',
+    '`Asir': 'Asir Province',
+    'Al Bahah': 'Al Bahah Province',
+}
+
+PROVINCE_TO_REGION = {
+    'Makkah Province': 'Western',
+    'Eastern Province': 'Eastern',
+    'Riyadh Province': 'Central',
+    'Asir Province': 'Southern',
+    'Qassim Province': 'Northern',
+    'Jazan Province': 'Southern',
+    'Madinah Province': 'Western',
+    'Al Bahah Province': 'Southern',
+    'Najran Province': 'Southern',
+    'Hail Province': 'Northern',
+    'Tabuk Province': 'Northern',
+    'Al Jouf Province': 'Northern',
+    'Northern Borders Province': 'Northern'
+}
+
+# ============================================
+# GEOJSON LOADING FOR PROVINCE DETECTION
+# ============================================
+@st.cache_resource
+def load_province_geojson():
+    """
+    Load Saudi Arabia province boundaries from GeoJSON for coordinate-based province detection.
+    Returns list of (province_name, polygon) tuples for point-in-polygon checks.
+    """
+    try:
+        from shapely.geometry import shape, Point
+        
+        geojson_path = os.path.join(APP_DIR, 'model_export', 'saudi_regions_enhanced.geojson')
+        if not os.path.exists(geojson_path):
+            # Try alternate location
+            geojson_path = os.path.join(APP_DIR, 'saudi_regions_enhanced.geojson')
+        
+        if not os.path.exists(geojson_path):
+            return None
+        
+        with open(geojson_path, 'r', encoding='utf-8') as f:
+            geojson_data = json.load(f)
+        
+        provinces = []
+        for feature in geojson_data.get('features', []):
+            props = feature.get('properties', {})
+            geojson_name = props.get('name', '')
+            
+            # Map GeoJSON province name to standard province name
+            province_name = GEOJSON_PROVINCE_TO_STANDARD.get(geojson_name, geojson_name)
+            
+            geometry = feature.get('geometry')
+            if geometry:
+                try:
+                    polygon = shape(geometry)
+                    provinces.append((province_name, polygon))
+                except Exception:
+                    pass
+        
+        return provinces
+    except ImportError:
+        # shapely not available
+        return None
+    except Exception as e:
+        return None
+
+PROVINCE_POLYGONS = load_province_geojson()
+
+def get_province_from_coordinates(lat, lon):
+    """
+    Determine province from latitude/longitude coordinates using GeoJSON boundaries.
+    
+    Args:
+        lat: Latitude (float)
+        lon: Longitude (float)
+    
+    Returns:
+        (province_name, region_name) or (None, None) if not found
+    """
+    if PROVINCE_POLYGONS is None:
+        return None, None
+    
+    try:
+        from shapely.geometry import Point
+        
+        point = Point(lon, lat)  # Note: shapely uses (lon, lat) order
+        
+        for province_name, polygon in PROVINCE_POLYGONS:
+            if polygon.contains(point):
+                region = PROVINCE_TO_REGION.get(province_name)
+                return province_name, region
+        
+        return None, None
+    except Exception:
+        return None, None
 
 def normalize_english_text(text):
     """Normalize English text for lookups - lowercase, strip, normalize whitespace/hyphens."""
@@ -520,6 +633,112 @@ def update_distance_pickle_from_sheet():
     
     except Exception as e:
         return False, 0, f"Error updating pickle: {str(e)}"
+
+# ============================================
+# BULK ADJUSTMENTS SHEET - Log user-provided distances/coordinates
+# These are for review only and NOT added to permanent references
+# ============================================
+def get_bulk_adjustments_sheet():
+    """
+    Get or create the Bulk Adjustments sheet for logging user-provided distances/coordinates.
+    NOT cached because we need fresh connection for reads/writes.
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        sheet_url = st.secrets.get('error_log_sheet_url')
+        if not sheet_url:
+            return None
+        
+        spreadsheet = client.open_by_url(sheet_url)
+        
+        try:
+            worksheet = spreadsheet.worksheet('Bulk Adjustments')
+        except:
+            # Create sheet with headers
+            worksheet = spreadsheet.add_worksheet(title='Bulk Adjustments', rows=1000, cols=15)
+            headers = [
+                'Timestamp', 'Row_Number', 'Pickup_City', 'Destination_City', 
+                'Pickup_EN', 'Destination_EN', 'User_Distance', 
+                'Pickup_Lat', 'Pickup_Lon', 'Dropoff_Lat', 'Dropoff_Lon',
+                'Detected_Pickup_Province', 'Detected_Dropoff_Province',
+                'Detected_Pickup_Region', 'Detected_Dropoff_Region'
+            ]
+            worksheet.update('A1:O1', [headers])
+        
+        return worksheet
+    except Exception as e:
+        return None
+
+def log_bulk_adjustment(row_num, pickup_city, dest_city, pickup_en, dest_en, 
+                        user_distance=None, pickup_lat=None, pickup_lon=None, 
+                        dropoff_lat=None, dropoff_lon=None,
+                        pickup_province=None, dropoff_province=None,
+                        pickup_region=None, dropoff_region=None):
+    """
+    Log a user-provided adjustment (distance or coordinates) to the pending queue.
+    These are logged for review but NOT added to permanent references.
+    
+    Call flush_bulk_adjustments_to_sheet() at the end of bulk operations.
+    """
+    if 'bulk_adjustments_pending' not in st.session_state:
+        st.session_state.bulk_adjustments_pending = []
+    
+    row = [
+        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        str(row_num),
+        pickup_city,
+        dest_city,
+        pickup_en,
+        dest_en,
+        str(user_distance) if user_distance is not None else '',
+        str(pickup_lat) if pickup_lat is not None else '',
+        str(pickup_lon) if pickup_lon is not None else '',
+        str(dropoff_lat) if dropoff_lat is not None else '',
+        str(dropoff_lon) if dropoff_lon is not None else '',
+        pickup_province or '',
+        dropoff_province or '',
+        pickup_region or '',
+        dropoff_region or ''
+    ]
+    
+    st.session_state.bulk_adjustments_pending.append(row)
+
+def flush_bulk_adjustments_to_sheet(batch_size=500):
+    """
+    Flush pending bulk adjustments to Google Sheets in batches.
+    Call this at the end of bulk operations.
+    
+    Args:
+        batch_size: Max number of rows to write per API call (default 500)
+    
+    Returns: (success, count) tuple
+    """
+    if 'bulk_adjustments_pending' not in st.session_state or len(st.session_state.bulk_adjustments_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.bulk_adjustments_pending
+    total_count = len(pending)
+    
+    try:
+        worksheet = get_bulk_adjustments_sheet()
+        if worksheet:
+            # Write in batches of batch_size
+            written = 0
+            for i in range(0, total_count, batch_size):
+                batch = pending[i:i + batch_size]
+                worksheet.append_rows(batch)
+                written += len(batch)
+            
+            st.session_state.bulk_adjustments_pending = []
+            return True, written
+    except Exception as e:
+        # Keep pending for retry
+        return False, 0
+    
+    return True, 0
 
 # ============================================
 # BULK SHEET HELPER - NO CACHING (connections can go stale)
@@ -1317,7 +1536,18 @@ class BlendPredictor:
         n_regions = len(set(self.city_to_region.values())) if self.city_to_region else 0
         self.using_provinces = n_provinces > 5  # True if we have 13 provinces, not 5 regions
     
-    def predict(self, pickup_city, dest_city, distance_km=None):
+    def predict(self, pickup_city, dest_city, distance_km=None, 
+                pickup_region_override=None, dest_region_override=None):
+        """
+        Predict CPK for a lane using province/region blending.
+        
+        Args:
+            pickup_city: Pickup city (Arabic canonical or English)
+            dest_city: Destination city (Arabic canonical or English)
+            distance_km: Distance in km (optional, used to calculate total cost)
+            pickup_region_override: Override region for pickup (from coordinates)
+            dest_region_override: Override region for destination (from coordinates)
+        """
         # Get canonical names
         p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
         d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
@@ -1333,8 +1563,15 @@ class BlendPredictor:
         # If no province CPK found, try REGION fallback (5 regions)
         regional_cpk = None
         if province_cpk is None:
+            # First try to get region from city mapping
             p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can) or self.city_to_region.get(pickup_city)
             d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can) or self.city_to_region.get(dest_city)
+            
+            # If still no region found, use coordinate-based region overrides
+            if not p_region and pickup_region_override:
+                p_region = pickup_region_override
+            if not d_region and dest_region_override:
+                d_region = dest_region_override
             
             if p_region and d_region:
                 regional_cpk = self.regional_cpk.get((p_region, d_region))
@@ -1354,6 +1591,9 @@ class BlendPredictor:
             # Fallback to region-level (5 regions)
             predicted_cpk = self.province_weight * regional_cpk + (1 - self.province_weight) * city_cpk
             method = f'Blend ({self.province_weight:.0%} Regional)'
+            # If we used coordinate-based regions, note it
+            if pickup_region_override or dest_region_override:
+                method = f'Blend ({self.province_weight:.0%} Regional/Coords)'
             confidence = 'Low'
         else:
             # No geographic data - use city multipliers only
@@ -1645,7 +1885,8 @@ def round_to_nearest(value, nearest):
     """Round value to nearest multiple (e.g., 100 for buy price, 50 for sell price)."""
     return int(round(value / nearest) * nearest) if value and not pd.isna(value) else None
 
-def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None):
+def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None,
+                     pickup_region_override=None, dest_region_override=None):
     """
     Calculate buy/sell prices using the pricing cascade.
     
@@ -1656,6 +1897,15 @@ def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None
     4. REGIONAL BLEND: If Province Blend fails (missing province data), use 5-region CPK instead
     5. CITY MULTIPLIERS: If no geographic data at all, use city multipliers only
     6. DEFAULT: Last resort - use default CPK × distance
+    
+    Args:
+        pickup_ar: Pickup city in Arabic
+        dest_ar: Destination city in Arabic
+        vehicle_ar: Vehicle type in Arabic
+        distance_km: Distance in km
+        lane_data: Optional pre-filtered lane data
+        pickup_region_override: Optional region override from coordinates
+        dest_region_override: Optional region override from coordinates
     
     Returns dict with buy_price, sell_price, model_used, confidence, etc.
     """
@@ -1677,7 +1927,10 @@ def calculate_prices(pickup_ar, dest_ar, vehicle_ar, distance_km, lane_data=None
     elif blend_predictor:
         # 3-5. BLEND MODEL: NEW lane with NO historical data
         # Internally tries: Province CPK → Regional CPK → City Multipliers
-        p = blend_predictor.predict(pickup_ar, dest_ar, distance_km)
+        # Pass region overrides from coordinates if available
+        p = blend_predictor.predict(pickup_ar, dest_ar, distance_km,
+                                    pickup_region_override=pickup_region_override,
+                                    dest_region_override=dest_region_override)
         buy_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
     else:
         # 6. DEFAULT: Last resort fallback (no models available)
@@ -1788,7 +2041,8 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
         res.update({'Blend_Price': p.get('predicted_cost'), 'Blend_Upper': p.get('cost_high'), 'Blend_Method': p['method']})
     return res
 
-def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, check_history=False):
+def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, check_history=False,
+                       pickup_region_override=None, dest_region_override=None):
     """
     Lookup route stats for bulk pricing - uses batch logging (immediate_log=False).
     
@@ -1799,20 +2053,26 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
         dist_override: If provided, use this distance instead of looking it up
         check_history: If True, only log to MatchedDistances if at least one city 
                       has historical data (for Master Grid)
+        pickup_region_override: If provided, use this region for pickup (from coordinates)
+        dest_region_override: If provided, use this region for destination (from coordinates)
     """
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
     
     # Use override distance if provided, otherwise look it up
+    dist_source = 'User Provided'
     if dist_override is not None and dist_override > 0:
         dist = dist_override
     else:
         # Use immediate_log=False for bulk pricing (queues errors for batch write)
-        dist, _ = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=False, check_history=check_history)
+        dist, dist_source = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=False, check_history=check_history)
     
-    pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data)
+    pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data,
+                               pickup_region_override=pickup_region_override,
+                               dest_region_override=dest_region_override)
     return {
         'From': to_english_city(pickup_ar), 'To': to_english_city(dest_ar), 'Distance': int(dist) if dist else 0,
+        'Distance_Source': dist_source,
         'Buy_Price': pricing['buy_price'], 'Rec_Sell': pricing['sell_price'],
         'Ref_Sell': pricing['ref_sell_price'], 'Ref_Sell_Src': pricing['ref_sell_source'],
         'Rental_Cost': pricing['rental_cost'], 'Margin': pricing['target_margin'],
@@ -2068,8 +2328,14 @@ with tab2:
     **Columns (by position, names ignored):**
     1. **Pickup City** (required)
     2. **Destination City** (required)
-    3. **Distance** (optional - overrides lookup if provided)
+    3. **Distance** (optional - used temporarily, NOT saved to references)
     4. **Vehicle Type** (optional - default: Flatbed Trailer)
+    5. **Pickup Latitude** (optional - for region detection if city unmatched)
+    6. **Pickup Longitude** (optional - for region detection if city unmatched)
+    7. **Dropoff Latitude** (optional - for region detection if city unmatched)
+    8. **Dropoff Longitude** (optional - for region detection if city unmatched)
+    
+    ⚠️ **Note:** User-provided distances and coordinates are used temporarily for pricing but are **NOT** saved to our reference data. They are logged to "Bulk Adjustments" sheet for review.
     
     **Output columns:**
     - Distance, Buy Price (rounded to 100), Sell Price (rounded to 50)
@@ -2077,10 +2343,14 @@ with tab2:
     - Model Used, Confidence, Recent Count
     """)
     st.download_button("📥 Template", pd.DataFrame({
-        'Pickup': ['Jeddah', 'Riyadh'], 
-        'Destination': ['Riyadh', 'Dammam'], 
-        'Distance': ['', ''],
-        'Vehicle_Type': ['Flatbed Trailer', '']
+        'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
+        'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
+        'Distance': ['', '', '450'],
+        'Vehicle_Type': ['Flatbed Trailer', '', ''],
+        'Pickup_Lat': ['', '', '24.7136'],
+        'Pickup_Lon': ['', '', '46.6753'],
+        'Dropoff_Lat': ['', '', '21.4858'],
+        'Dropoff_Lon': ['', '', '39.1925']
     }).to_csv(index=False), "template.csv", "text/csv")
     
     upl = st.file_uploader("Upload CSV", type=['csv'])
@@ -2093,7 +2363,9 @@ with tab2:
                 st.dataframe(r_df.head(10), use_container_width=True)
             
             if st.button("🔍 Look Up All Routes", type="primary", use_container_width=True):
-                res, unmat = [], []
+                res = []
+                unmat_cities = []  # Unmatched cities
+                missing_distances = []  # Missing distances
                 prog = st.progress(0)
                 status_text = st.empty()
                 
@@ -2107,13 +2379,16 @@ with tab2:
                     # Column 2: Destination (required)
                     d_raw = str(row.iloc[1]).strip() if len(row) > 1 else ''
                     
-                    # Column 3: Distance (optional - overrides lookup)
+                    # Column 3: Distance (optional - used temporarily only)
                     dist_override = None
+                    user_provided_distance = False
                     if len(row) > 2:
                         dist_val = row.iloc[2]
                         if pd.notna(dist_val) and str(dist_val).strip() not in ['', 'nan', 'None']:
                             try:
                                 dist_override = float(str(dist_val).replace(',', '').strip())
+                                if dist_override > 0:
+                                    user_provided_distance = True
                             except ValueError:
                                 pass
                     
@@ -2122,18 +2397,70 @@ with tab2:
                     if len(row) > 3:
                         v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
                     
+                    # Columns 5-8: Lat/Lon coordinates (optional)
+                    pickup_lat, pickup_lon, dropoff_lat, dropoff_lon = None, None, None, None
+                    user_provided_coords = False
+                    
+                    if len(row) > 4:
+                        try:
+                            val = row.iloc[4]
+                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                pickup_lat = float(str(val).strip())
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    if len(row) > 5:
+                        try:
+                            val = row.iloc[5]
+                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                pickup_lon = float(str(val).strip())
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    if len(row) > 6:
+                        try:
+                            val = row.iloc[6]
+                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                dropoff_lat = float(str(val).strip())
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    if len(row) > 7:
+                        try:
+                            val = row.iloc[7]
+                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                dropoff_lon = float(str(val).strip())
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Check if user provided any coordinates
+                    if pickup_lat is not None or pickup_lon is not None or dropoff_lat is not None or dropoff_lon is not None:
+                        user_provided_coords = True
+                    
+                    # Detect provinces from coordinates if provided
+                    pickup_province, pickup_region = None, None
+                    dropoff_province, dropoff_region = None, None
+                    
+                    if pickup_lat is not None and pickup_lon is not None:
+                        pickup_province, pickup_region = get_province_from_coordinates(pickup_lat, pickup_lon)
+                    
+                    if dropoff_lat is not None and dropoff_lon is not None:
+                        dropoff_province, dropoff_region = get_province_from_coordinates(dropoff_lat, dropoff_lon)
+                    
                     # Normalize cities
                     p_ar, p_ok = normalize_city(p_raw)
                     d_ar, d_ok = normalize_city(d_raw)
                     
                     if not p_ok: 
                         classification = classify_unmatched_city(p_raw)
-                        unmat.append({
+                        unmat_cities.append({
                             'Row': i+1, 
                             'Col': 'Pickup (Col 1)', 
                             'Val': p_raw,
                             'Error': classification['error_type'],
-                            'Action': classification['action']
+                            'Action': classification['action'],
+                            'Detected_Province': pickup_province or '',
+                            'Detected_Region': pickup_region or ''
                         })
                         log_exception(classification['error_type'], {
                             'row': i+1, 
@@ -2141,16 +2468,21 @@ with tab2:
                             'original_value': p_raw,
                             'message': classification['message'],
                             'action': classification['action'],
-                            'in_historical_data': classification['in_historical_data']
+                            'in_historical_data': classification['in_historical_data'],
+                            'detected_province': pickup_province,
+                            'detected_region': pickup_region
                         })
+                    
                     if not d_ok: 
                         classification = classify_unmatched_city(d_raw)
-                        unmat.append({
+                        unmat_cities.append({
                             'Row': i+1, 
                             'Col': 'Destination (Col 2)', 
                             'Val': d_raw,
                             'Error': classification['error_type'],
-                            'Action': classification['action']
+                            'Action': classification['action'],
+                            'Detected_Province': dropoff_province or '',
+                            'Detected_Region': dropoff_region or ''
                         })
                         log_exception(classification['error_type'], {
                             'row': i+1, 
@@ -2158,19 +2490,58 @@ with tab2:
                             'original_value': d_raw,
                             'message': classification['message'],
                             'action': classification['action'],
-                            'in_historical_data': classification['in_historical_data']
+                            'in_historical_data': classification['in_historical_data'],
+                            'detected_province': dropoff_province,
+                            'detected_region': dropoff_region
                         })
                     
                     v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
                     
-                    # Pass distance override to lookup function
-                    res.append(lookup_route_stats(p_ar, d_ar, v_ar, dist_override=dist_override))
+                    # Log to Bulk Adjustments sheet if user provided distance or coordinates
+                    if user_provided_distance or user_provided_coords:
+                        log_bulk_adjustment(
+                            row_num=i+1,
+                            pickup_city=p_raw,
+                            dest_city=d_raw,
+                            pickup_en=to_english_city(p_ar) if p_ok else p_raw,
+                            dest_en=to_english_city(d_ar) if d_ok else d_raw,
+                            user_distance=dist_override if user_provided_distance else None,
+                            pickup_lat=pickup_lat,
+                            pickup_lon=pickup_lon,
+                            dropoff_lat=dropoff_lat,
+                            dropoff_lon=dropoff_lon,
+                            pickup_province=pickup_province,
+                            dropoff_province=dropoff_province,
+                            pickup_region=pickup_region,
+                            dropoff_region=dropoff_region
+                        )
+                    
+                    # Pass distance override and regions to lookup function
+                    route_result = lookup_route_stats(
+                        p_ar, d_ar, v_ar, 
+                        dist_override=dist_override,
+                        pickup_region_override=pickup_region,
+                        dest_region_override=dropoff_region
+                    )
+                    
+                    # Track missing distances
+                    if route_result.get('Distance', 0) == 0 or route_result.get('Distance_Source') == 'Missing':
+                        missing_distances.append({
+                            'Row': i+1,
+                            'From': route_result.get('From', p_raw),
+                            'To': route_result.get('To', d_raw),
+                            'Distance': route_result.get('Distance', 0),
+                            'Status': 'Missing - needs Google Maps lookup'
+                        })
+                    
+                    res.append(route_result)
                     prog.progress((i+1)/len(r_df))
                     status_text.text(f"Looking up {i+1}/{len(r_df)}: {p_raw} → {d_raw}")
                 
                 status_text.text("✅ Complete!")
                 st.session_state.bulk_results = pd.DataFrame(res)
-                st.session_state.bulk_unmatched = pd.DataFrame(unmat)
+                st.session_state.bulk_unmatched_cities = pd.DataFrame(unmat_cities)
+                st.session_state.bulk_missing_distances = pd.DataFrame(missing_distances)
                 
                 # Flush any pending error logs to Google Sheets in one batch
                 flushed_ok, flushed_count = flush_error_log_to_sheet()
@@ -2181,6 +2552,12 @@ with tab2:
                 dist_ok, dist_count = flush_matched_distances_to_sheet()
                 if dist_count > 0:
                     st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
+                
+                # Flush any pending bulk adjustments to Google Sheets
+                adj_ok, adj_count = flush_bulk_adjustments_to_sheet()
+                if adj_count > 0:
+                    st.caption(f"📋 Logged {adj_count} user-provided adjustments for review")
+                    
         except Exception as e: st.error(f"Error: {e}")
 
     # Results Display (Outside indentation so it persists)
@@ -2209,9 +2586,32 @@ with tab2:
             if ok: st.success(msg)
             else: st.error(msg)
 
-    if 'bulk_unmatched' in st.session_state and not st.session_state.bulk_unmatched.empty:
-        st.warning(f"{len(st.session_state.bulk_unmatched)} unmatched cities")
-        st.dataframe(st.session_state.bulk_unmatched)
+    # Separate tables for unmatched cities and missing distances
+    st.markdown("---")
+    
+    # Table 1: Unmatched Cities
+    if 'bulk_unmatched_cities' in st.session_state and not st.session_state.bulk_unmatched_cities.empty:
+        st.subheader("⚠️ Unmatched Cities")
+        st.warning(f"{len(st.session_state.bulk_unmatched_cities)} city names could not be matched to our database")
+        st.dataframe(st.session_state.bulk_unmatched_cities, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Download Unmatched Cities", 
+            st.session_state.bulk_unmatched_cities.to_csv(index=False), 
+            "unmatched_cities.csv", 
+            "text/csv"
+        )
+    
+    # Table 2: Missing Distances
+    if 'bulk_missing_distances' in st.session_state and not st.session_state.bulk_missing_distances.empty:
+        st.subheader("📏 Missing Distances")
+        st.info(f"{len(st.session_state.bulk_missing_distances)} routes have missing distances (logged for Google Maps lookup)")
+        st.dataframe(st.session_state.bulk_missing_distances, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Download Missing Distances", 
+            st.session_state.bulk_missing_distances.to_csv(index=False), 
+            "missing_distances.csv", 
+            "text/csv"
+        )
 
     # ============================================
     # MASTER GRID GENERATOR

@@ -2233,7 +2233,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     dist, dist_src = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=True)
     if dist == 0: dist, dist_src = 500, 'Default'
     
-    ppricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data, weight=weight)
+    pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data, weight=weight)
     
     res = {
         'Vehicle_Type': to_english_vehicle(vehicle_ar), 'Commodity': to_english_commodity(commodity),

@@ -1066,6 +1066,97 @@ def upload_to_gsheet(df, batch_size=500, progress_callback=None):
     except Exception as e:
         return False, f"❌ Upload error: {str(e)}"
 
+def upload_to_rfq_sheet(df, sheet_name, batch_size=500, progress_callback=None):
+    """
+    Upload dataframe to a NEW sheet tab in the RFQ Google Sheet.
+    
+    Creates a new sheet tab with the given name to prevent overwriting existing data.
+    
+    Args:
+        df: DataFrame to upload
+        sheet_name: Name for the new sheet tab (must be unique)
+        batch_size: Number of rows per batch (default 500)
+        progress_callback: Optional function to call with progress updates
+    
+    Returns:
+        (success, message) tuple
+    """
+    import time
+    
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return False, "❌ Google Cloud credentials not found. Check secrets configuration."
+        
+        rfq_url = st.secrets.get('RFQ_url')
+        if not rfq_url:
+            return False, "❌ RFQ_url not configured in secrets."
+        
+        try:
+            spreadsheet = client.open_by_url(rfq_url)
+        except Exception as e:
+            return False, f"❌ Failed to open RFQ spreadsheet: {str(e)}"
+        
+        # Check if sheet name already exists
+        existing_sheets = [ws.title for ws in spreadsheet.worksheets()]
+        if sheet_name in existing_sheets:
+            return False, f"❌ Sheet '{sheet_name}' already exists. Please choose a different name."
+        
+        # Create new sheet tab
+        try:
+            total_rows = len(df) + 5  # Data rows + header + buffer
+            total_cols = len(df.columns) + 2  # Data cols + buffer
+            wks = spreadsheet.add_worksheet(title=sheet_name, rows=total_rows, cols=total_cols)
+        except Exception as e:
+            return False, f"❌ Failed to create sheet '{sheet_name}': {str(e)}"
+        
+        # Convert all values to string for JSON serialization (gspread requirement)
+        headers = df.columns.values.tolist()
+        data_rows = df.astype(str).values.tolist()
+        total_data_rows = len(data_rows)
+        
+        # Write header row first
+        try:
+            wks.update('A1', [headers])
+        except Exception as e:
+            return False, f"❌ Failed to write headers: {str(e)}"
+        
+        # Write data in batches
+        rows_written = 0
+        batch_num = 0
+        
+        for i in range(0, total_data_rows, batch_size):
+            batch = data_rows[i:i + batch_size]
+            start_row = i + 2  # +2 because row 1 is header, and sheets are 1-indexed
+            
+            try:
+                range_str = f'A{start_row}'
+                wks.update(range_str, batch)
+                rows_written += len(batch)
+                batch_num += 1
+                
+                # Call progress callback if provided
+                if progress_callback:
+                    progress_callback(rows_written, total_data_rows, batch_num)
+                
+                # Small delay between batches to avoid rate limiting
+                if i + batch_size < total_data_rows:
+                    time.sleep(0.5)
+                    
+            except Exception as e:
+                return False, f"❌ Failed at batch {batch_num + 1} (rows {start_row}-{start_row + len(batch) - 1}): {str(e)}"
+        
+        # Add timestamp row at the end
+        timestamp_row = [f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]
+        try:
+            wks.update(f'A{total_data_rows + 2}', [timestamp_row])
+        except:
+            pass  # Non-critical, ignore if it fails
+            
+        return True, f"✅ Successfully uploaded {rows_written} rows to new sheet '{sheet_name}' in {batch_num} batches"
+    except Exception as e:
+        return False, f"❌ Upload error: {str(e)}"
+
 # ============================================
 # FIXED SETTINGS
 # ============================================
@@ -2566,25 +2657,6 @@ with tab2:
         st.markdown("---")
         st.subheader("📊 Results")
         st.dataframe(res_df, use_container_width=True, hide_index=True)
-        st.download_button("📥 Download Results", res_df.to_csv(index=False), "results.csv", "text/csv", type="primary")
-        
-        st.markdown("---")
-        st.subheader("☁️ Cloud Upload")
-        st.caption(f"Target Sheet: `{BULK_PRICING_SHEET_URL}`")
-        if st.button("☁️ Upload Results to Google Sheet"):
-            upload_progress = st.progress(0)
-            upload_status = st.empty()
-            
-            def update_progress(rows_done, total_rows, batch_num):
-                upload_progress.progress(rows_done / total_rows)
-                upload_status.text(f"Uploaded {rows_done:,}/{total_rows:,} rows (batch {batch_num})...")
-            
-            ok, msg = upload_to_gsheet(res_df, batch_size=500, progress_callback=update_progress)
-            
-            upload_progress.progress(1.0)
-            upload_status.empty()
-            if ok: st.success(msg)
-            else: st.error(msg)
 
     # Separate tables for unmatched cities and missing distances
     st.markdown("---")
@@ -2598,7 +2670,8 @@ with tab2:
             "📥 Download Unmatched Cities", 
             st.session_state.bulk_unmatched_cities.to_csv(index=False), 
             "unmatched_cities.csv", 
-            "text/csv"
+            "text/csv",
+            key="download_unmatched_cities"
         )
     
     # Table 2: Missing Distances
@@ -2610,8 +2683,64 @@ with tab2:
             "📥 Download Missing Distances", 
             st.session_state.bulk_missing_distances.to_csv(index=False), 
             "missing_distances.csv", 
-            "text/csv"
+            "text/csv",
+            key="download_missing_distances"
         )
+
+    # Download & Cloud Upload Section (after unmatched sections)
+    if 'bulk_results' in st.session_state and not st.session_state.bulk_results.empty:
+        res_df = st.session_state.bulk_results
+        st.markdown("---")
+        st.subheader("💾 Download & Cloud Upload")
+        
+        # Download button
+        st.download_button(
+            "📥 Download Results CSV", 
+            res_df.to_csv(index=False), 
+            "pricing_results.csv", 
+            "text/csv", 
+            type="primary",
+            key="download_results_csv"
+        )
+        
+        st.markdown("---")
+        
+        # Cloud Upload with sheet naming
+        st.markdown("##### ☁️ Upload to Google Sheets")
+        rfq_sheet_url = st.secrets.get('RFQ_url', '')
+        if rfq_sheet_url:
+            st.caption(f"Target Spreadsheet: RFQ Pricing Sheet")
+            
+            # Prompt for sheet name
+            default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
+            sheet_name = st.text_input(
+                "Sheet Name", 
+                value=default_sheet_name,
+                help="Enter a unique name for the new sheet tab. This prevents overwriting existing data.",
+                key="rfq_sheet_name"
+            )
+            
+            if st.button("☁️ Upload to Google Sheet", type="secondary", key="upload_to_rfq"):
+                if not sheet_name or sheet_name.strip() == '':
+                    st.error("Please enter a sheet name")
+                else:
+                    upload_progress = st.progress(0)
+                    upload_status = st.empty()
+                    
+                    def update_progress(rows_done, total_rows, batch_num):
+                        upload_progress.progress(rows_done / total_rows)
+                        upload_status.text(f"Uploaded {rows_done:,}/{total_rows:,} rows (batch {batch_num})...")
+                    
+                    ok, msg = upload_to_rfq_sheet(res_df, sheet_name.strip(), batch_size=500, progress_callback=update_progress)
+                    
+                    upload_progress.progress(1.0)
+                    upload_status.empty()
+                    if ok: 
+                        st.success(msg)
+                    else: 
+                        st.error(msg)
+        else:
+            st.warning("RFQ_url not configured in secrets. Cloud upload unavailable.")
 
     # ============================================
     # MASTER GRID GENERATOR

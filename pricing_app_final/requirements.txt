@@ -7,3 +7,4 @@ pyarrow>=14.0.0
 gspread>=5.12.0
 google-auth>=2.23.0
 shapely>=2.0.0
+rapidfuzz>=3.0.0

@@ -2592,6 +2592,7 @@ with tab2:
             st.error(msg)
     
     upl = st.file_uploader("Upload CSV", type=['csv'])
+    
     if upl:
         try:
             r_df = pd.read_csv(upl)
@@ -2600,20 +2601,28 @@ with tab2:
             with st.expander("📋 Preview"):
                 st.dataframe(r_df.head(10), use_container_width=True)
             
-            # --- NEW: Global Vehicle Selector ---
+            # --- NEW: Multi-Select Vehicle Checkboxes ---
             st.markdown("---")
             st.markdown("##### 🔧 Bulk Settings")
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                # Checkbox to enable the override
-                use_global_vehicle = st.checkbox("Apply single vehicle to all?", help="If checked, this vehicle type will be used for ALL rows, ignoring the CSV column.")
-            with c2:
-                # Selectbox for the vehicle type (enabled only if checkbox is checked)
-                # Default to Flatbed Trailer if available
-                def_idx = vehicle_types_en.index('Flatbed Trailer') if 'Flatbed Trailer' in vehicle_types_en else 0
-                global_vehicle = st.selectbox("Select Vehicle Type", options=vehicle_types_en, index=def_idx, disabled=not use_global_vehicle, label_visibility="collapsed")
-            st.markdown("---")
-            # ------------------------------------
+            st.caption("Select vehicle types to apply to ALL routes. If you select multiple, each route will be priced multiple times (once per vehicle).")
+            
+            # Create a grid layout for checkboxes (4 columns)
+            # This avoids a super long vertical list
+            v_cols = st.columns(4)
+            selected_vehicles_en = []
+            
+            # Iterate through all available vehicle types and create a checkbox for each
+            for i, v_en in enumerate(vehicle_types_en):
+                col_idx = i % 4
+                with v_cols[col_idx]:
+                    # Check 'Flatbed Trailer' by default for convenience
+                    is_checked = st.checkbox(v_en, value=(v_en == 'Flatbed Trailer'))
+                    if is_checked:
+                        selected_vehicles_en.append(v_en)
+            
+            if not selected_vehicles_en:
+                st.info("ℹ️ No global vehicles selected. The app will look for a 'Vehicle Type' column in your CSV for each row.")
+            # --------------------------------------------
 
             if st.button("🔍 Look Up All Routes", type="primary", use_container_width=True):
                 res = []
@@ -2644,18 +2653,6 @@ with tab2:
                                     user_provided_distance = True
                             except ValueError:
                                 pass
-                    
-                    # --- UPDATED: Vehicle Type Logic ---
-                    if use_global_vehicle:
-                        # Use the global selection
-                        v_ar = to_arabic_vehicle(global_vehicle)
-                    else:
-                        # Use CSV Column 4 (optional)
-                        v_raw = ''
-                        if len(row) > 3:
-                            v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
-                        v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
-                    # -----------------------------------
                     
                     # Columns 5-8: Lat/Lon coordinates (optional)
                     pickup_lat, pickup_lon, dropoff_lat, dropoff_lon = None, None, None, None
@@ -2784,26 +2781,53 @@ with tab2:
                             dropoff_region=dropoff_region
                         )
                     
-                    # Pass distance override, regions and weight to lookup function
-                    route_result = lookup_route_stats(
-                        p_ar, d_ar, v_ar, 
-                        dist_override=dist_override,
-                        pickup_region_override=pickup_region,
-                        dest_region_override=dropoff_region,
-                        weight=weight_val
-                    )
+                    # --- VEHICLE LOOP LOGIC ---
+                    # Determine which vehicles to run for this row
+                    vehicles_to_run = []
                     
-                    # Track missing distances
-                    if route_result.get('Distance', 0) == 0 or route_result.get('Distance_Source') == 'Missing':
-                        missing_distances.append({
-                            'Row': i+1,
-                            'From': route_result.get('From', p_raw),
-                            'To': route_result.get('To', d_raw),
-                            'Distance': route_result.get('Distance', 0),
-                            'Status': 'Missing - needs Google Maps lookup'
-                        })
+                    if selected_vehicles_en:
+                        # 1. Use the selected checkboxes (Global Override)
+                        vehicles_to_run = [to_arabic_vehicle(v) for v in selected_vehicles_en]
+                    else:
+                        # 2. Fallback to CSV Column 4 if no checkboxes selected
+                        v_raw = ''
+                        if len(row) > 3:
+                            v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
+                        v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
+                        vehicles_to_run = [v_ar]
                     
-                    res.append(route_result)
+                    # Run pricing for EACH selected vehicle
+                    for v_ar in vehicles_to_run:
+                        # Pass distance override, regions and weight to lookup function
+                        route_result = lookup_route_stats(
+                            p_ar, d_ar, v_ar, 
+                            dist_override=dist_override,
+                            pickup_region_override=pickup_region,
+                            dest_region_override=dropoff_region,
+                            weight=weight_val
+                        )
+                        
+                        # Add CSV Row number context for clarity in results
+                        route_result['CSV_Row'] = i + 1
+                        
+                        # Track missing distances (only once per unique route to avoid duplicates in log)
+                        # We use a key of (From, To) to check duplicates in the local missing_distances list
+                        is_missing = route_result.get('Distance', 0) == 0 or route_result.get('Distance_Source') == 'Missing'
+                        if is_missing:
+                            # Simple check to avoid spamming the missing list for the same route 5 times
+                            already_logged = any(m['Row'] == i+1 and m['From'] == route_result.get('From') and m['To'] == route_result.get('To') for m in missing_distances)
+                            if not already_logged:
+                                missing_distances.append({
+                                    'Row': i+1,
+                                    'From': route_result.get('From', p_raw),
+                                    'To': route_result.get('To', d_raw),
+                                    'Distance': route_result.get('Distance', 0),
+                                    'Status': 'Missing - needs Google Maps lookup'
+                                })
+                        
+                        res.append(route_result)
+                    # ---------------------------
+                    
                     prog.progress((i+1)/len(r_df))
                     status_text.text(f"Looking up {i+1}/{len(r_df)}: {p_raw} → {d_raw}")
                 

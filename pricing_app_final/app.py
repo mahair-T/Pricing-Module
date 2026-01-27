@@ -1770,6 +1770,8 @@ def batch_fuzzy_match_cities(unmatched_cities, threshold=80):
     for city in unmatched_cities:
         results[city] = fuzzy_match_city(city, threshold)
     return results
+
+def get_city_region(city):
     """Get region for a city (checks both variant and canonical mappings). Returns 5-region value."""
     if city in CITY_TO_REGION:
         return CITY_TO_REGION[city]

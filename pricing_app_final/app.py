@@ -1,3 +1,7 @@
+import requests  # <--- Add this at the top
+import folium
+from streamlit_folium import st_folium
+###
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1627,6 +1631,22 @@ CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 # HELPER FUNCTIONS
 # City normalization and translation utilities
 # ============================================
+
+# OSM SEARCH HELPER
+def search_osm(query):
+    """Search OpenStreetMap via Nominatim API."""
+    if not query: return None
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {'q': query, 'format': 'json', 'limit': 1, 'countrycodes': 'sa'}
+    headers = {'User-Agent': 'FreightPricingTool/1.0'}
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=5)
+        data = response.json()
+        if data:
+            return float(data[0]['lat']), float(data[0]['lon']), data[0]['display_name']
+    except: return None
+    return None
+
 def normalize_city(city_raw):
     """
     Normalize city name to standard Arabic canonical form.
@@ -2740,7 +2760,7 @@ if CITIES_WITHOUT_REGIONS:
             st.code(city)
         st.info("Add these to city_normalization.csv with columns: variant, canonical, english, region")
 
-tab1, tab2 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup"])
+tab1, tab2, tab3 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup","🗺️ Map Explorer"])
 
 with tab1:
     st.subheader("📋 Route Information")
@@ -4155,7 +4175,74 @@ with tab2:
                         st.error(f"⚠️ {len(failed_now)} routes still have failed Google Maps lookups.")
                 else:
                     st.error(message)
-                    
+
+# --- TAB 3: MAP EXPLORER ---
+with tab3:
+    st.subheader("🗺️ Saudi Freight Map")
+    
+    # Session state for map center
+    if 'map_center' not in st.session_state: st.session_state.map_center = [24.7136, 46.6753]
+    if 'map_zoom' not in st.session_state: st.session_state.map_zoom = 6
+    if 'pin_marker' not in st.session_state: st.session_state.pin_marker = None
+
+    col_ctrl, col_map = st.columns([1, 3])
+    
+    with col_ctrl:
+        st.markdown("### 🔍 Search Location")
+        search_query = st.text_input("Enter City or District", placeholder="e.g. Riyadh Industrial City 2")
+        
+        if st.button("Search Map", type="primary", use_container_width=True):
+            with st.spinner("Searching OSM..."):
+                res = search_osm(search_query)
+                if res:
+                    lat, lon, name = res
+                    st.session_state.map_center = [lat, lon]
+                    st.session_state.map_zoom = 12
+                    st.session_state.pin_marker = {'loc': [lat, lon], 'popup': name}
+                    st.success(f"Found: {name.split(',')[0]}")
+                else: st.error("Location not found.")
+
+        st.markdown("---")
+        st.markdown("### 📍 Driving Distance")
+        
+        # Distance Calculator
+        p_en = st.selectbox("Origin", pickup_cities_en, key='map_p')
+        d_en = st.selectbox("Destination", dest_cities_en, index=1, key='map_d')
+        
+        # Calculate
+        dist_val, dist_src = get_distance(to_arabic_city(p_en), to_arabic_city(d_en))
+        
+        if dist_val > 0:
+            st.metric("Distance", f"{dist_val:,.0f} km", delta=dist_src)
+            st.caption(f"Est. Base Rate: ~{dist_val * 1.8:,.0f} SAR")
+        else:
+            st.warning("Distance not known.")
+
+    with col_map:
+        m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles="CartoDB positron")
+        
+        # Add Search Pin
+        if st.session_state.pin_marker:
+            folium.Marker(
+                st.session_state.pin_marker['loc'],
+                popup=st.session_state.pin_marker['popup'],
+                icon=folium.Icon(color="red", icon="info-sign")
+            ).add_to(m)
+
+        # Draw Route Line (if distance exists)
+        p_coords = get_province_from_coordinates(24.0, 45.0) # Placeholder if you don't have city coords map
+        # Note: Drawing lines requires known coords for every city. 
+        # If you want lines, we need the CITY_COORDS dictionary from the previous step.
+        
+        st_data = st_folium(m, width="100%", height=600)
+        
+        if st_data['last_clicked']:
+            c_lat, c_lon = st_data['last_clicked']['lat'], st_data['last_clicked']['lng']
+            prov, reg = get_province_from_coordinates(c_lat, c_lon)
+            st.info(f"📍 **Clicked:** {c_lat:.4f}, {c_lon:.4f}")
+            if prov: st.success(f"✅ Region: **{prov}** ({reg})")
+            else: st.warning("⚠️ Outside known Saudi provinces")
+                
 # ERROR LOG SECTION (Restored to exact snippet)
 error_log_csv = get_error_log_csv()
 if error_log_csv:

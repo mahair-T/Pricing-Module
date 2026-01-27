@@ -576,8 +576,8 @@ def flush_append_sheet():
 
 def flush_matched_distances_to_sheet():
     """
-    Flush pending matched distances to Google Sheet using Explicit Resize.
-    This bypasses 'append_rows' grid limit issues by manually expanding the sheet.
+    Flush pending matched distances to Google Sheet.
+    Automatically resizes the sheet if more rows are needed.
     """
     if 'matched_distances_pending' not in st.session_state or len(st.session_state.matched_distances_pending) == 0:
         return True, 0
@@ -587,37 +587,31 @@ def flush_matched_distances_to_sheet():
     try:
         worksheet = get_matched_distances_sheet()
         if not worksheet:
+            if 'flush_errors' not in st.session_state: st.session_state.flush_errors = []
+            st.session_state.flush_errors.append(f"Could not get MatchedDistances worksheet")
             return False, 0
         
-        # 1. Get all existing data to determine where the data ends
-        #    (We use this instead of row_count to find the true bottom of the data)
-        existing_values = worksheet.get_all_values()
-        last_data_row = len(existing_values)
-        
-        # Build existing pairs set for deduplication
+        # Get existing data to check duplicates
+        existing = worksheet.get_all_values()
         existing_pairs = set()
-        for row in existing_values[1:]:
-            if len(row) >= 3:
+        for row in existing[1:]:
+            if len(row) >= 5:
                 existing_pairs.add((row[1], row[2]))
-                existing_pairs.add((row[2], row[1]))
+                existing_pairs.add((row[2], row[1]))  # Both directions
         
+        next_row = len(existing) + 1
         rows_to_add = []
-        # Start writing at the next available line
-        start_row_index = last_data_row + 1 
         
-        for i, item in enumerate(pending):
-            # Skip duplicates
+        for item in pending:
+            # Skip if already exists
             if (item['pickup_ar'], item['dest_ar']) in existing_pairs:
                 continue
             if (item['dest_ar'], item['pickup_ar']) in existing_pairs:
                 continue
             
-            # Calculate the explicit row number for this entry
-            current_row_num = start_row_index + len(rows_to_add)
-            
-            # Build formulas using the correct row number
+            # Build formulas
             formula = f'=GOOGLEMAPS_DISTANCE("{item["pickup_en"]}, Saudi Arabia", "{item["dest_en"]}, Saudi Arabia", "driving")'
-            value_ref = f'=IF(N(F{current_row_num})>0, F{current_row_num}, "")'
+            value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
             
             row_data = [
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -632,37 +626,33 @@ def flush_matched_distances_to_sheet():
             ]
             rows_to_add.append(row_data)
             existing_pairs.add((item['pickup_ar'], item['dest_ar']))
+            next_row += 1
         
         if rows_to_add:
-            count = len(rows_to_add)
+            # --- CRITICAL FIX: RESIZE SHEET IF NEEDED ---
+            current_row_count = worksheet.row_count
+            required_rows = next_row + 10 # Add a small buffer
             
-            # 2. CALCULATE EXACT RANGE
-            #    We need to write from A{start} to I{end}
-            end_row_index = start_row_index + count - 1
-            range_string = f"A{start_row_index}:I{end_row_index}"
-            
-            # 3. FORCE RESIZE SHEET
-            #    Ensure the grid is large enough to hold the new end row
-            current_grid_rows = worksheet.row_count
-            if end_row_index > current_grid_rows:
-                # Add a small buffer (e.g., +10 rows) or just exact size
-                worksheet.resize(rows=end_row_index + 5)
-            
-            # 4. EXPLICIT WRITE (Not Append)
-            #    Write directly to the calculated range
-            worksheet.update(range_name=range_string, values=rows_to_add, value_input_option='USER_ENTERED')
+            if required_rows > current_row_count:
+                # Add enough rows to fit data plus a buffer of 500 for future
+                rows_to_append = max(len(rows_to_add), 500)
+                worksheet.add_rows(rows_to_append)
+            # --------------------------------------------
+
+            # Write all rows at once
+            start_row = len(existing) + 1
+            end_row = start_row + len(rows_to_add) - 1
+            worksheet.update(f'A{start_row}:I{end_row}', rows_to_add, value_input_option='USER_ENTERED')
         
-        # Success - clear queue
+        # Clear pending queue
         st.session_state.matched_distances_pending = []
         return True, len(rows_to_add)
     
     except Exception as e:
-        # Log error for debugging
-        if 'flush_errors' not in st.session_state:
-            st.session_state.flush_errors = []
-        st.session_state.flush_errors.append(f"Dist Flush Error: {str(e)}")
+        if 'flush_errors' not in st.session_state: st.session_state.flush_errors = []
+        st.session_state.flush_errors.append(f"Flush Error: {str(e)}")
         return False, 0
-
+        
 def update_city_normalization_pickle(new_entries):
     """
     Update the in-memory city normalization dictionaries with new entries.

@@ -3010,7 +3010,7 @@ if CITIES_WITHOUT_REGIONS:
             st.code(city)
         st.info("Add these to city_normalization.csv with columns: variant, canonical, english, region")
 
-tab1, tab2, tab3 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup","🗺️ Map Explorer"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup", "🗺️ Map Explorer", "🔧 Admin"])
 
 with tab1:
     st.subheader("📋 Route Information")
@@ -3254,16 +3254,23 @@ with tab2:
     steps = ["📤 Upload", "🏙️ Cities", "📏 Distances", "💰 Pricing"]
     current_step = st.session_state.bulk_wizard_step
     
-    # Progress indicator
-    cols = st.columns(len(steps))
-    for i, (col, step_name) in enumerate(zip(cols, steps)):
+    # Compact progress indicator in a single row
+    step_cols = st.columns(len(steps) + 2)  # Extra cols for reset button
+    for i, (col, step_name) in enumerate(zip(step_cols[:len(steps)], steps)):
         with col:
             if i < current_step:
-                st.success(f"✅ {step_name}")
+                st.markdown(f"<div style='text-align:center;color:#28a745;font-weight:bold;'>✅ {step_name}</div>", unsafe_allow_html=True)
             elif i == current_step:
-                st.info(f"➡️ {step_name}")
+                st.markdown(f"<div style='text-align:center;color:#007bff;font-weight:bold;'>➡️ {step_name}</div>", unsafe_allow_html=True)
             else:
-                st.caption(f"⬜ {step_name}")
+                st.markdown(f"<div style='text-align:center;color:#6c757d;'>⬜ {step_name}</div>", unsafe_allow_html=True)
+    
+    # Reset button in the last column
+    with step_cols[-1]:
+        if current_step > 0:
+            if st.button("🔄 Reset", key="wizard_reset_top", use_container_width=True):
+                reset_wizard()
+                st.rerun()
     
     st.markdown("---")
     
@@ -3564,18 +3571,6 @@ with tab2:
     # STEP 1: City Resolution
     # ============================================
     elif current_step == 1:
-        st.markdown("### Step 2: Resolve Unmatched Cities")
-        
-        # Show last distance flush result if any
-        if 'last_distance_flush' in st.session_state:
-            st.caption(st.session_state['last_distance_flush'])
-        
-        # Show any flush errors
-        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
-            for err in st.session_state.flush_errors:
-                st.warning(err)
-            st.session_state.flush_errors = []  # Clear after showing
-        
         wizard_data = st.session_state.bulk_wizard_data
         unmatched = wizard_data.get('unmatched_cities', {})
         fuzzy_results = wizard_data.get('fuzzy_results', {})
@@ -3588,25 +3583,53 @@ with tab2:
             st.session_state.bulk_wizard_step = 2
             st.rerun()
         
-        st.info(f"Found **{len(unmatched)}** unique unmatched city names across your routes.")
-        
-        # Show match breakdown
-        if match_counts:
-            cols = st.columns(3)
-            with cols[0]:
-                st.metric("🌍 Google Matches", match_counts.get('google', 0))
-            with cols[1]:
-                st.metric("🔤 Fuzzy Matches", match_counts.get('fuzzy', 0))
-            with cols[2]:
-                st.metric("❌ No Matches", match_counts.get('none', 0))
-        
         # Initialize resolution state if not exists
         if 'city_resolutions' not in st.session_state:
             st.session_state.city_resolutions = {}
         
-        # Build resolution table
-        st.markdown("#### Review and resolve each city:")
-        st.caption("Cities are ordered: Google matches first, then fuzzy matches, then no matches.")
+        # Count resolved
+        resolutions = st.session_state.city_resolutions
+        total_unmatched = len(unmatched)
+        resolved_count = sum(1 for city in unmatched if city in resolutions and resolutions[city].get('type') != 'pending')
+        
+        # TOP NAVIGATION BAR
+        nav_cols = st.columns([1, 3, 1])
+        with nav_cols[0]:
+            if st.button("⬅️ Back", key="step1_back_top", use_container_width=True):
+                st.session_state.bulk_wizard_step = 0
+                st.rerun()
+        with nav_cols[1]:
+            can_proceed = resolved_count >= total_unmatched
+            if st.button(f"▶️ Continue ({resolved_count}/{total_unmatched} resolved)", type="primary", 
+                        key="step1_next_top", use_container_width=True, disabled=not can_proceed):
+                st.session_state.step1_apply = True
+                st.rerun()
+        with nav_cols[2]:
+            st.empty()
+        
+        st.markdown("---")
+        
+        # Header with match stats
+        st.markdown("### 🏙️ Resolve Unmatched Cities")
+        
+        if match_counts:
+            cols = st.columns(4)
+            with cols[0]:
+                st.metric("Total", total_unmatched)
+            with cols[1]:
+                st.metric("🌍 Google", match_counts.get('google', 0))
+            with cols[2]:
+                st.metric("🔤 Fuzzy", match_counts.get('fuzzy', 0))
+            with cols[3]:
+                st.metric("❌ None", match_counts.get('none', 0))
+        
+        # Show any flush errors
+        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
+            for err in st.session_state.flush_errors:
+                st.warning(err)
+            st.session_state.flush_errors = []
+        
+        st.caption("Cities are ordered: Google matches first → Fuzzy matches → No matches. Expand to resolve.")
         
         for idx, (city_name, info) in enumerate(unmatched.items()):
             # Determine match type for this city
@@ -3820,27 +3843,13 @@ with tab2:
         actual_resolved = resolved_count - ignored_count
         total_unmatched = len(unmatched)
         
-        st.markdown("---")
-        if ignored_count > 0:
-            st.markdown(f"**Resolved: {actual_resolved}/{total_unmatched}** | **Ignored: {ignored_count}**")
-        else:
-            st.markdown(f"**Resolved: {resolved_count}/{total_unmatched}**")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        with col1:
-            if st.button("⬅️ Back", use_container_width=True):
-                st.session_state.bulk_wizard_step = 0
-                st.rerun()
-        
-        with col2:
-            # Allow proceeding when all cities are resolved OR ignored
+        # Process if top button was clicked
+        should_apply = st.session_state.get('step1_apply', False)
+        if should_apply:
+            st.session_state.step1_apply = False
             can_proceed = resolved_count >= total_unmatched
-            if st.button("▶️ Apply Resolutions & Check Distances", type="primary", 
-                        use_container_width=True, disabled=not can_proceed):
-                if not can_proceed:
-                    st.error("Please resolve or ignore all unmatched cities before proceeding")
-                else:
+            
+            if can_proceed:
                     # Apply resolutions
                     resolutions = st.session_state.city_resolutions
                     new_entries = []
@@ -4013,18 +4022,11 @@ with tab2:
                     # Move to distance review
                     st.session_state.bulk_wizard_step = 2
                     st.rerun()
-        
-        with col3:
-            if st.button("🔄 Reset", use_container_width=True):
-                reset_wizard()
-                st.rerun()
     
     # ============================================
     # STEP 2: Distance Review
     # ============================================
     elif current_step == 2:
-        st.markdown("### Step 3: Review Distances")
-        
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
         username = wizard_data.get('username', '')
@@ -4033,8 +4035,24 @@ with tab2:
         # Filter out ignored rows
         active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
         
+        # TOP NAVIGATION BAR (before any data loading)
+        nav_cols = st.columns([1, 3, 1])
+        with nav_cols[0]:
+            if st.button("⬅️ Back", key="step2_back_top", use_container_width=True):
+                st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
+                st.rerun()
+        with nav_cols[1]:
+            # This button will be enabled/disabled based on data loaded below
+            step2_continue = st.button("▶️ Generate Pricing", type="primary", 
+                        key="step2_next_top", use_container_width=True)
+        with nav_cols[2]:
+            st.empty()
+        
+        st.markdown("---")
+        st.markdown("### 📏 Review Distances")
+        
         if ignored_rows:
-            st.info(f"ℹ️ {len(ignored_rows)} routes were ignored and will be excluded from pricing.")
+            st.caption(f"ℹ️ {len(ignored_rows)} routes ignored and excluded from pricing.")
         
         # Calculate distances for all routes
         if 'distance_results' not in st.session_state.bulk_wizard_data:
@@ -4261,68 +4279,55 @@ with tab2:
             for pair_key, info in missing_distances.items()
         )
         
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        with col1:
-            if st.button("⬅️ Back", use_container_width=True):
-                st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
-                st.rerun()
-        
-        with col2:
-            proceed_disabled = bool(missing_distances) and not all_resolved
-            if st.button("▶️ Generate Pricing", type="primary", use_container_width=True,
-                        disabled=proceed_disabled):
-                # Log distance edits as user suggestions
-                for pair_key, new_dist in st.session_state.distance_edits.items():
-                    pickup_ar, dest_ar = pair_key
-                    info = distance_results.get(pair_key, {})
-                    old_dist = info.get('distance', 0)
-                    
-                    if new_dist != old_dist:
-                        # Log as user suggestion to MatchedDistances
-                        suggest_distance_change(
-                            pickup_ar=pickup_ar,
-                            dest_ar=dest_ar,
-                            pickup_en=info.get('pickup_en', to_english_city(pickup_ar)),
-                            dest_en=info.get('dest_en', to_english_city(dest_ar)),
-                            current_distance=old_dist,
-                            suggested_distance=new_dist,
-                            user_name=username
-                        )
+        # Process if top button was clicked and allowed
+        proceed_disabled = bool(missing_distances) and not all_resolved
+        if step2_continue and not proceed_disabled:
+            # Log distance edits as user suggestions
+            for pair_key, new_dist in st.session_state.distance_edits.items():
+                pickup_ar, dest_ar = pair_key
+                info = distance_results.get(pair_key, {})
+                old_dist = info.get('distance', 0)
                 
-                # Store final distances WITH their sources
-                final_distances = {}
-                distance_sources = {}
-                for pair_key, info in distance_results.items():
-                    if pair_key in st.session_state.distance_edits:
-                        # User edited in Step 2
-                        final_distances[pair_key] = st.session_state.distance_edits[pair_key]
-                        distance_sources[pair_key] = 'User Edited'
-                    elif info['user_override']:
-                        # User provided in CSV
-                        final_distances[pair_key] = info['user_override']
-                        distance_sources[pair_key] = 'CSV Provided'
-                    else:
-                        # From matrix/historical - store distance but mark source so we know not to override
-                        final_distances[pair_key] = info['distance']
-                        distance_sources[pair_key] = info['source']  # 'Matrix', 'Historical', etc.
-                
-                st.session_state.bulk_wizard_data['final_distances'] = final_distances
-                st.session_state.bulk_wizard_data['distance_sources'] = distance_sources
-                st.session_state.bulk_wizard_step = 3
-                st.rerun()
-        
-        with col3:
-            if st.button("🔄 Reset", use_container_width=True):
-                reset_wizard()
-                st.rerun()
+                if new_dist != old_dist:
+                    # Log as user suggestion to MatchedDistances
+                    suggest_distance_change(
+                        pickup_ar=pickup_ar,
+                        dest_ar=dest_ar,
+                        pickup_en=info.get('pickup_en', to_english_city(pickup_ar)),
+                        dest_en=info.get('dest_en', to_english_city(dest_ar)),
+                        current_distance=old_dist,
+                        suggested_distance=new_dist,
+                        user_name=username
+                    )
+            
+            # Store final distances WITH their sources
+            final_distances = {}
+            distance_sources = {}
+            for pair_key, info in distance_results.items():
+                if pair_key in st.session_state.distance_edits:
+                    # User edited in Step 2
+                    final_distances[pair_key] = st.session_state.distance_edits[pair_key]
+                    distance_sources[pair_key] = 'User Edited'
+                elif info['user_override']:
+                    # User provided in CSV
+                    final_distances[pair_key] = info['user_override']
+                    distance_sources[pair_key] = 'CSV Provided'
+                else:
+                    # From matrix/historical - store distance but mark source so we know not to override
+                    final_distances[pair_key] = info['distance']
+                    distance_sources[pair_key] = info['source']  # 'Matrix', 'Historical', etc.
+            
+            st.session_state.bulk_wizard_data['final_distances'] = final_distances
+            st.session_state.bulk_wizard_data['distance_sources'] = distance_sources
+            st.session_state.bulk_wizard_step = 3
+            st.rerun()
+        elif step2_continue and proceed_disabled:
+            st.error("⚠️ Please resolve all missing distances before proceeding")
     
     # ============================================
     # STEP 3: Final Pricing
     # ============================================
     elif current_step == 3:
-        st.markdown("### Step 4: Pricing Results")
-        
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
         selected_vehicles = wizard_data.get('selected_vehicles', ['Flatbed Trailer'])
@@ -4333,8 +4338,25 @@ with tab2:
         # Filter out ignored rows
         active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
         
+        # TOP NAVIGATION BAR
+        nav_cols = st.columns([1, 2, 2])
+        with nav_cols[0]:
+            if st.button("⬅️ Back", key="step3_back_top", use_container_width=True):
+                st.session_state.bulk_results_stale = True
+                st.session_state.bulk_wizard_step = 2
+                st.rerun()
+        with nav_cols[1]:
+            if st.button("🔄 New Lookup", key="step3_reset_top", use_container_width=True):
+                reset_wizard()
+                st.rerun()
+        with nav_cols[2]:
+            st.empty()
+        
+        st.markdown("---")
+        st.markdown("### 💰 Pricing Results")
+        
         if ignored_rows:
-            st.info(f"ℹ️ {len(ignored_rows)} routes were ignored and excluded from pricing.")
+            st.caption(f"ℹ️ {len(ignored_rows)} routes excluded.")
         
         if not active_rows:
             st.warning("⚠️ All routes were ignored. No pricing to generate.")
@@ -4434,333 +4456,6 @@ with tab2:
                             st.link_button("🔗 Open Sheet", rfq_sheet_url)
                         else:
                             st.error(msg)
-            
-            # Navigation
-            st.markdown("---")
-            col1, col2 = st.columns([1, 3])
-            
-            with col1:
-                if st.button("⬅️ Back to Distances", use_container_width=True):
-                    st.session_state.bulk_results_stale = True
-                    st.session_state.bulk_wizard_step = 2
-                    st.rerun()
-            
-            with col2:
-                if st.button("🔄 Start New Bulk Lookup", type="secondary", use_container_width=True):
-                    reset_wizard()
-                    st.rerun()
-    # ============================================
-    # MASTER GRID GENERATOR
-    # Generates pricing for all city-to-city combinations
-    # Uploads directly to Google Sheet for reference pricing
-    # ============================================
-    st.markdown("---")
-    with st.expander("⚡ Admin: Generate Master Grid (All Cities)"):
-        st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a few minutes.")
-        st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
-        
-        batch_size = st.slider("Batch size", min_value=100, max_value=500, value=250, step=50, 
-                               help="Number of routes to generate and upload at a time")
-        
-        # Check if there's a previous incomplete run
-        has_incomplete = 'master_grid_progress' in st.session_state and st.session_state.master_grid_progress.get('incomplete', False)
-        
-        if has_incomplete:
-            prog = st.session_state.master_grid_progress
-            
-            # Show error message if there was one
-            if prog.get('error_message'):
-                st.error(f"❌ {prog['error_message']}")
-            
-            st.warning(f"⚠️ Previous run incomplete: {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded. You can resume from here.")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                resume_clicked = st.button("🔄 Resume Upload", type="primary")
-            with col2:
-                if st.button("🗑️ Start Fresh"):
-                    del st.session_state.master_grid_progress
-                    if 'master_grid_df' in st.session_state:
-                        del st.session_state.master_grid_df
-                    st.rerun()
-        else:
-            resume_clicked = False
-        
-        start_fresh_clicked = st.button("🚀 Run & Upload Master Grid") if not has_incomplete else False
-        
-        if start_fresh_clicked or resume_clicked:
-            import time
-            
-            # Get worksheet connection first
-            wks = get_bulk_sheet()
-            if not wks:
-                st.error("❌ Google Cloud credentials not found or sheet access denied.")
-            else:
-                # Build list of all route combinations (excluding same-city)
-                combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
-                total_routes = len(combos)
-                
-                # Ensure sheet has enough rows (routes + header + timestamp + buffer)
-                ensure_sheet_rows(wks, total_routes + 10)
-                
-                # Determine starting point
-                if resume_clicked and has_incomplete:
-                    # Resume from where we left off
-                    prog = st.session_state.master_grid_progress
-                    start_index = prog['next_index']
-                    rows_written = prog['rows_written']
-                    batch_num = prog['batch_num']
-                    all_results = prog.get('all_results', [])
-                    st.info(f"📊 Resuming from route {start_index:,} ({rows_written:,} already uploaded)...")
-                else:
-                    # Fresh start - clear sheet and write headers
-                    try:
-                        wks.clear()
-                        headers = ['From', 'To', 'Distance', 'Buy_Price', 'Rec_Sell', 'Ref_Sell', 
-                                   'Ref_Sell_Src', 'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
-                        wks.update('A1', [headers])
-                    except Exception as e:
-                        st.error(f"❌ Failed to initialize sheet: {str(e)}")
-                        st.stop()
-                    
-                    start_index = 0
-                    rows_written = 0
-                    batch_num = 0
-                    all_results = []
-                    st.info(f"📊 Generating and uploading {total_routes:,} routes in batches of {batch_size}...")
-                
-                progress_bar = st.progress(rows_written / total_routes if total_routes > 0 else 0)
-                status_text = st.empty()
-                
-                # Process in batches: generate → write → repeat
-                for i in range(start_index, total_routes, batch_size):
-                    batch_combos = combos[i:i + batch_size]
-                    batch_num += 1
-                    
-                    # Generate prices for this batch
-                    status_text.text(f"Batch {batch_num}: Generating {len(batch_combos)} routes...")
-                    batch_results = []
-                    for p_ar, d_ar in batch_combos:
-                        batch_results.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR, check_history=True))
-                    
-                    all_results.extend(batch_results)
-                    
-                    # Check if we need to flush error logs and matched distances (every 500 errors)
-                    pending_errors = len(st.session_state.get('error_log_pending', []))
-                    pending_distances = len(st.session_state.get('matched_distances_pending', []))
-                    if pending_errors >= 500:
-                        flush_error_log_to_sheet(batch_size=500)
-                    if pending_distances >= 100:
-                        flush_matched_distances_to_sheet()
-                    
-                    # Write this batch to sheet
-                    status_text.text(f"Batch {batch_num}: Writing {len(batch_results)} rows to sheet...")
-                    try:
-                        start_row = rows_written + 2  # +2 for header and 1-indexing
-                        batch_df = pd.DataFrame(batch_results)
-                        data_rows = batch_df.astype(str).values.tolist()
-                        wks.update(f'A{start_row}', data_rows)
-                        rows_written += len(batch_results)
-                    except Exception as e:
-                        # Save state for resume
-                        st.session_state.master_grid_progress = {
-                            'incomplete': True,
-                            'next_index': i + batch_size,
-                            'rows_written': rows_written,
-                            'batch_num': batch_num,
-                            'total_routes': total_routes,
-                            'all_results': all_results,
-                            'error_message': f"Failed at batch {batch_num}: {str(e)}"
-                        }
-                        # Flush any pending errors and matched distances before rerun
-                        flush_error_log_to_sheet(batch_size=500)
-                        flush_matched_distances_to_sheet()
-                        st.rerun()
-                    
-                    # Update progress
-                    progress_bar.progress(min(1.0, (i + len(batch_combos)) / total_routes))
-                    status_text.text(f"✓ Batch {batch_num} complete | {rows_written:,}/{total_routes:,} routes uploaded")
-                    
-                    # Small delay to avoid rate limiting
-                    if i + batch_size < total_routes:
-                        time.sleep(0.3)
-                
-                # If we get here, loop completed successfully (errors cause st.rerun())
-                # Add timestamp
-                try:
-                    wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
-                except:
-                    pass
-                
-                progress_bar.progress(1.0)
-                st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
-                status_text.empty()
-                
-                # Clear incomplete state
-                if 'master_grid_progress' in st.session_state:
-                    del st.session_state.master_grid_progress
-                
-                # Flush any remaining pending error logs
-                flushed_ok, flushed_count = flush_error_log_to_sheet(batch_size=500)
-                if flushed_count > 0:
-                    st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
-                
-                # Flush any remaining pending matched distances
-                dist_ok, dist_count = flush_matched_distances_to_sheet()
-                if dist_count > 0:
-                    st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
-                
-                # Store for download
-                st.session_state.master_grid_df = pd.DataFrame(all_results)
-        
-        # Allow download of master grid if it was generated
-        if 'master_grid_df' in st.session_state:
-            st.download_button(
-                "📥 Download Master Grid CSV", 
-                st.session_state.master_grid_df.to_csv(index=False), 
-                "master_grid.csv", 
-                "text/csv"
-            )
-    
-    # ============================================
-    # DISTANCE UPDATE FROM GOOGLE SHEETS
-    # Pull resolved distances from MatchedDistances sheet
-    # ============================================
-    st.markdown("---")
-    with st.expander("📏 Admin: Update Distances from Google Sheets"):
-        # Inject CSS to strictly force centering on Metric elements
-        st.markdown("""
-            <style>
-            /* Center the main metric container */
-            div[data-testid="stMetric"] {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-                width: 100%;
-            }
-            /* Center the label (top text) */
-            div[data-testid="stMetricLabel"] {
-                justify-content: center;
-                width: 100%;
-                margin: auto;
-            }
-            /* Center the value (big number) */
-            div[data-testid="stMetricValue"] {
-                justify-content: center;
-                width: 100%;
-                margin: auto;
-            }
-            /* Center the delta (arrow text) if present */
-            div[data-testid="stMetricDelta"] {
-                justify-content: center;
-                width: 100%;
-                margin: auto;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-
-        # 1. Dashboard Metrics
-        resolved = get_resolved_distances_from_sheet()
-        failed = get_failed_distances_from_sheet()
-        
-        st.markdown("<h3 style='text-align: center;'>📊 Status Dashboard</h3>", unsafe_allow_html=True)
-        
-        # Use spacers to center the 3 metrics in the middle of the screen
-        # Layout: [spacer, metric, metric, metric, spacer]
-        _, m1, m2, m3, _ = st.columns([1, 2, 2, 2, 1])
-        
-        m1.metric("Ready to Import", len(resolved), help="Distances found in Sheet ready to be added")
-        m2.metric("Failed Lookups", len(failed), delta_color="inverse" if len(failed) > 0 else "off", help="Routes Google couldn't find")
-        m3.metric("Current Pickle Size", f"{len(DISTANCE_MATRIX):,}", help="Total distances currently in memory")
-        
-        # 2. Detailed Data Views (Tabs)
-        if resolved or failed:
-            # DETAILS: Left-aligned
-            st.markdown("<h4 style='text-align: left;'>📋 Details</h4>", unsafe_allow_html=True)
-            t1, t2 = st.tabs(["✅ Ready to Import", "⚠️ Failed Lookups"])
-            
-            with t1:
-                if resolved:
-                    # Description: Left-aligned
-                    st.markdown("<p style='text-align: left; color: gray;'>These distances will be added to your local database.</p>", unsafe_allow_html=True)
-                    preview_df = pd.DataFrame([
-                        {'From': to_english_city(r['pickup_ar']), 
-                            'To': to_english_city(r['dest_ar']), 
-                            'Distance': f"{r['distance_km']} km",
-                            'Source': '✏️ User' if r.get('is_suggestion') else '🌐 API',
-                            'Row': r['row']}
-                        for r in resolved
-                    ])
-                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No pending distances to import.")
-
-            with t2:
-                if failed:
-                    # Description: Left-aligned
-                    st.markdown("<p style='text-align: left; color: orange;'>These routes failed API lookup. Please manually enter distances in Column G of the Sheet.</p>", unsafe_allow_html=True)
-                    failed_df = pd.DataFrame([
-                        {'Row': f['row'],
-                            'From': f['pickup_en'] or to_english_city(f['pickup_ar']),
-                            'To': f['dest_en'] or to_english_city(f['dest_ar']),
-                            'Error': f['error_value']}
-                        for f in failed
-                    ])
-                    st.dataframe(failed_df, use_container_width=True, hide_index=True)
-                else:
-                    st.success("No failed lookups! All clean.")
-
-        st.markdown("---")
-        
-        # 3. Actions Area (Save & Sync)
-        st.markdown("<h5 style='text-align: center;'>💾 Save & Sync</h5>", unsafe_allow_html=True)
-        
-        # Center buttons using spacer columns
-        _, c1, c2, c3, _ = st.columns([1, 2, 2, 2, 1])
-        
-        with c1:
-            refresh_clicked = st.button("🔍 Refresh Sheet Data", use_container_width=True)
-
-        with c2:
-            import_clicked = st.button("🔄 Import to Pickle", type="primary", disabled=len(resolved)==0, use_container_width=True)
-            
-        with c3:
-            # Read the current file from memory/disk for download
-            pkl_path = os.path.join(APP_DIR, 'model_export', 'distance_matrix.pkl')
-            if os.path.exists(pkl_path):
-                with open(pkl_path, 'rb') as f:
-                    pkl_data = f.read()
-                    
-                st.download_button(
-                    label="📥 Download .pkl",
-                    data=pkl_data,
-                    file_name="distance_matrix.pkl",
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                    type="secondary"
-                )
-
-        if refresh_clicked:
-            st.rerun()
-
-        # Import Logic (Preserved)
-        if import_clicked:
-            with st.spinner("Importing distances..."):
-                success, count, message = update_distance_pickle_from_sheet()
-                if success:
-                    st.success(message)
-                    if count > 0:
-                        st.balloons()
-                        st.cache_resource.clear()  # Clear cached data to reload
-                    
-                    # Re-check for failed lookups immediately AFTER import
-                    failed_now = get_failed_distances_from_sheet()
-                    if failed_now:
-                        st.error(f"⚠️ {len(failed_now)} routes still have failed Google Maps lookups.")
-                else:
-                    st.error(message)
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
 # --- TAB 3: MAP EXPLORER (KEY ROTATION FIX) ---
@@ -4938,5 +4633,265 @@ if error_log_csv:
             if st.button("🗑️ Clear Log"):
                 clear_error_log()
                 st.rerun()
+
+# --- TAB 4: ADMIN ---
+with tab4:
+    st.subheader("🔧 Admin Panel")
+    
+    # Password protection
+    if 'admin_authenticated' not in st.session_state:
+        st.session_state.admin_authenticated = False
+    
+    if not st.session_state.admin_authenticated:
+        st.warning("🔒 This section requires admin access.")
+        
+        admin_password = st.text_input("Enter Admin Password", type="password", key="admin_pwd_input")
+        
+        if st.button("🔓 Unlock Admin Panel", type="primary"):
+            correct_password = st.secrets.get('admin_password', '')
+            if admin_password == correct_password and correct_password != '':
+                st.session_state.admin_authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect password")
+    else:
+        # Show logout option
+        col1, col2 = st.columns([4, 1])
+        with col2:
+            if st.button("🔒 Lock", use_container_width=True):
+                st.session_state.admin_authenticated = False
+                st.rerun()
+        
+        st.success("✅ Admin access granted")
+        st.markdown("---")
+        
+        # ============================================
+        # MASTER GRID GENERATOR
+        # ============================================
+        st.markdown("### ⚡ Generate Master Grid")
+        st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a few minutes.")
+        st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
+        
+        batch_size = st.slider("Batch size", min_value=100, max_value=500, value=250, step=50, 
+                               help="Number of routes to generate and upload at a time", key="admin_batch_size")
+        
+        # Check if there's a previous incomplete run
+        has_incomplete = 'master_grid_progress' in st.session_state and st.session_state.master_grid_progress.get('incomplete', False)
+        
+        if has_incomplete:
+            prog = st.session_state.master_grid_progress
+            
+            if prog.get('error_message'):
+                st.error(f"❌ {prog['error_message']}")
+            
+            st.warning(f"⚠️ Previous run incomplete: {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                resume_clicked = st.button("🔄 Resume Upload", type="primary", key="admin_resume")
+            with col2:
+                if st.button("🗑️ Start Fresh", key="admin_fresh"):
+                    del st.session_state.master_grid_progress
+                    if 'master_grid_df' in st.session_state:
+                        del st.session_state.master_grid_df
+                    st.rerun()
+        else:
+            resume_clicked = False
+        
+        start_fresh_clicked = st.button("🚀 Run & Upload Master Grid", key="admin_run") if not has_incomplete else False
+        
+        if start_fresh_clicked or resume_clicked:
+            import time
+            
+            wks = get_bulk_sheet()
+            if not wks:
+                st.error("❌ Google Cloud credentials not found or sheet access denied.")
+            else:
+                combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
+                total_routes = len(combos)
+                
+                ensure_sheet_rows(wks, total_routes + 10)
+                
+                if resume_clicked and has_incomplete:
+                    prog = st.session_state.master_grid_progress
+                    start_index = prog['next_index']
+                    rows_written = prog['rows_written']
+                    batch_num = prog['batch_num']
+                    all_results = prog.get('all_results', [])
+                    st.info(f"📊 Resuming from route {start_index:,} ({rows_written:,} already uploaded)...")
+                else:
+                    try:
+                        wks.clear()
+                        headers = ['From', 'To', 'Distance', 'Buy_Price', 'Rec_Sell', 'Ref_Sell', 
+                                   'Ref_Sell_Src', 'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
+                        wks.update('A1', [headers])
+                    except Exception as e:
+                        st.error(f"❌ Failed to initialize sheet: {str(e)}")
+                        st.stop()
+                    
+                    start_index = 0
+                    rows_written = 0
+                    batch_num = 0
+                    all_results = []
+                    st.info(f"📊 Generating and uploading {total_routes:,} routes in batches of {batch_size}...")
+                
+                progress_bar = st.progress(rows_written / total_routes if total_routes > 0 else 0)
+                status_text = st.empty()
+                
+                for i in range(start_index, total_routes, batch_size):
+                    batch_combos = combos[i:i + batch_size]
+                    batch_num += 1
+                    
+                    status_text.text(f"Batch {batch_num}: Generating {len(batch_combos)} routes...")
+                    batch_results = []
+                    for p_ar, d_ar in batch_combos:
+                        batch_results.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR, check_history=True))
+                    
+                    all_results.extend(batch_results)
+                    
+                    pending_errors = len(st.session_state.get('error_log_pending', []))
+                    pending_distances = len(st.session_state.get('matched_distances_pending', []))
+                    if pending_errors >= 500:
+                        flush_error_log_to_sheet(batch_size=500)
+                    if pending_distances >= 100:
+                        flush_matched_distances_to_sheet()
+                    
+                    status_text.text(f"Batch {batch_num}: Writing {len(batch_results)} rows to sheet...")
+                    try:
+                        start_row = rows_written + 2
+                        batch_df = pd.DataFrame(batch_results)
+                        data_rows = batch_df.astype(str).values.tolist()
+                        wks.update(f'A{start_row}', data_rows)
+                        rows_written += len(batch_results)
+                    except Exception as e:
+                        st.session_state.master_grid_progress = {
+                            'incomplete': True,
+                            'next_index': i + batch_size,
+                            'rows_written': rows_written,
+                            'batch_num': batch_num,
+                            'total_routes': total_routes,
+                            'all_results': all_results,
+                            'error_message': f"Failed at batch {batch_num}: {str(e)}"
+                        }
+                        flush_error_log_to_sheet(batch_size=500)
+                        flush_matched_distances_to_sheet()
+                        st.rerun()
+                    
+                    progress_bar.progress(min(1.0, (i + len(batch_combos)) / total_routes))
+                    status_text.text(f"✓ Batch {batch_num} complete | {rows_written:,}/{total_routes:,} routes uploaded")
+                    
+                    if i + batch_size < total_routes:
+                        time.sleep(0.3)
+                
+                try:
+                    wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+                except:
+                    pass
+                
+                progress_bar.progress(1.0)
+                st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
+                status_text.empty()
+                
+                if 'master_grid_progress' in st.session_state:
+                    del st.session_state.master_grid_progress
+                
+                flushed_ok, flushed_count = flush_error_log_to_sheet(batch_size=500)
+                if flushed_count > 0:
+                    st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
+                
+                dist_ok, dist_count = flush_matched_distances_to_sheet()
+                if dist_count > 0:
+                    st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
+                
+                st.session_state.master_grid_df = pd.DataFrame(all_results)
+        
+        if 'master_grid_df' in st.session_state:
+            st.download_button(
+                "📥 Download Master Grid CSV", 
+                st.session_state.master_grid_df.to_csv(index=False), 
+                "master_grid.csv", 
+                "text/csv",
+                key="admin_download_grid"
+            )
+        
+        st.markdown("---")
+        
+        # ============================================
+        # DISTANCE UPDATE FROM GOOGLE SHEETS
+        # ============================================
+        st.markdown("### 📏 Update Distances from Google Sheets")
+        
+        resolved = get_resolved_distances_from_sheet()
+        failed = get_failed_distances_from_sheet()
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Ready to Import", len(resolved))
+        col2.metric("Failed Lookups", len(failed))
+        col3.metric("Pickle Size", f"{len(DISTANCE_MATRIX):,}")
+        
+        if resolved or failed:
+            t1, t2 = st.tabs(["✅ Ready to Import", "⚠️ Failed Lookups"])
+            
+            with t1:
+                if resolved:
+                    preview_df = pd.DataFrame([
+                        {'From': to_english_city(r['pickup_ar']), 
+                         'To': to_english_city(r['dest_ar']), 
+                         'Distance': f"{r['distance_km']} km",
+                         'Source': '✏️ User' if r.get('is_suggestion') else '🌐 API'}
+                        for r in resolved[:20]
+                    ])
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                    if len(resolved) > 20:
+                        st.caption(f"... and {len(resolved) - 20} more")
+                else:
+                    st.info("No pending distances to import.")
+
+            with t2:
+                if failed:
+                    failed_df = pd.DataFrame([
+                        {'From': f['pickup_en'] or to_english_city(f['pickup_ar']),
+                         'To': f['dest_en'] or to_english_city(f['dest_ar']),
+                         'Error': f['error_value']}
+                        for f in failed[:20]
+                    ])
+                    st.dataframe(failed_df, use_container_width=True, hide_index=True)
+                    if len(failed) > 20:
+                        st.caption(f"... and {len(failed) - 20} more")
+                else:
+                    st.success("No failed lookups!")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔍 Refresh", use_container_width=True, key="admin_refresh"):
+                st.rerun()
+
+        with col2:
+            if st.button("🔄 Import to Pickle", type="primary", disabled=len(resolved)==0, 
+                        use_container_width=True, key="admin_import"):
+                with st.spinner("Importing distances..."):
+                    success, count, message = update_distance_pickle_from_sheet()
+                    if success:
+                        st.success(message)
+                        if count > 0:
+                            st.balloons()
+                            st.cache_resource.clear()
+                    else:
+                        st.error(message)
+            
+        with col3:
+            pkl_path = os.path.join(APP_DIR, 'model_export', 'distance_matrix.pkl')
+            if os.path.exists(pkl_path):
+                with open(pkl_path, 'rb') as f:
+                    pkl_data = f.read()
+                st.download_button(
+                    label="📥 Download .pkl",
+                    data=pkl_data,
+                    file_name="distance_matrix.pkl",
+                    mime="application/octet-stream",
+                    use_container_width=True,
+                    key="admin_download_pkl"
+                )
 
 st.caption("Freight Pricing Tool | Buy Price rounded to 100 | Sell Price rounded to 50 | All prices in SAR")

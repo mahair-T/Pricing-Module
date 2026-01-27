@@ -1632,7 +1632,7 @@ CITY_EN_TO_AR = {v: k for k, v in CITY_AR_TO_EN.items()}
 # City normalization and translation utilities
 # ============================================
 
-# OSM SEARCH HELPER
+# OSM SEARCH HELPERS
 def search_osm(query):
     """Search OpenStreetMap via Nominatim API."""
     if not query: return None
@@ -1644,6 +1644,28 @@ def search_osm(query):
         data = response.json()
         if data:
             return float(data[0]['lat']), float(data[0]['lon']), data[0]['display_name']
+    except: return None
+    return None
+
+def get_osrm_route(start_coords, end_coords):
+    """
+    Calculate driving distance using OSRM (Open Source Routing Machine).
+    Expects coords as [lat, lon].
+    Returns distance_km or None.
+    """
+    # OSRM URL format: /route/v1/driving/{lon},{lat};{lon},{lat}
+    # Note: OSRM uses Longitude, Latitude order
+    url = f"http://router.project-osrm.org/route/v1/driving/{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
+    params = {'overview': 'false'} # We only need distance, not the geometry for now
+    
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get('code') == 'Ok' and data.get('routes'):
+                # Distance is in meters
+                dist_meters = data['routes'][0]['distance']
+                return dist_meters / 1000.0
     except: return None
     return None
 
@@ -4176,72 +4198,117 @@ with tab2:
                 else:
                     st.error(message)
 
-# --- TAB 3: MAP EXPLORER ---
+# --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
 with tab3:
-    st.subheader("🗺️ Saudi Freight Map")
+    st.subheader("🗺️ Live Distance Calculator (OSM)")
     
-    # Session state for map center
+    # 1. Initialize State Variables
     if 'map_center' not in st.session_state: st.session_state.map_center = [24.7136, 46.6753]
     if 'map_zoom' not in st.session_state: st.session_state.map_zoom = 6
-    if 'pin_marker' not in st.session_state: st.session_state.pin_marker = None
-
-    col_ctrl, col_map = st.columns([1, 3])
+    # Pins: [Lat, Lon, Name]
+    if 'pin_1' not in st.session_state: st.session_state.pin_1 = None
+    if 'pin_2' not in st.session_state: st.session_state.pin_2 = None
+    
+    # Layout: Controls on Left, Map on Right
+    col_ctrl, col_map = st.columns([1, 2])
     
     with col_ctrl:
-        st.markdown("### 🔍 Search Location")
-        search_query = st.text_input("Enter City or District", placeholder="e.g. Riyadh Industrial City 2")
+        st.markdown("### 📍 Set Locations")
+        st.info("💡 **Tip:** Use the search bars below OR select a 'Click Mode' and click directly on the map.")
         
-        if st.button("Search Map", type="primary", use_container_width=True):
-            with st.spinner("Searching OSM..."):
-                res = search_osm(search_query)
-                if res:
-                    lat, lon, name = res
-                    st.session_state.map_center = [lat, lon]
-                    st.session_state.map_zoom = 12
-                    st.session_state.pin_marker = {'loc': [lat, lon], 'popup': name}
-                    st.success(f"Found: {name.split(',')[0]}")
-                else: st.error("Location not found.")
+        # --- PIN 1 (ORIGIN) ---
+        st.markdown("#### 🟢 Origin (Pin 1)")
+        search_1 = st.text_input("Search Location 1", key="search_1_box", placeholder="e.g. Jeddah Port")
+        if st.button("Search Origin"):
+            res = search_osm(search_1)
+            if res:
+                st.session_state.pin_1 = {'loc': [res[0], res[1]], 'name': res[2].split(',')[0]}
+                st.session_state.map_center = [res[0], res[1]]
+                st.session_state.map_zoom = 10
+            else: st.error("Location 1 not found")
+            
+        if st.session_state.pin_1:
+            st.success(f"Selected: **{st.session_state.pin_1['name']}**")
+            st.caption(f"{st.session_state.pin_1['loc'][0]:.4f}, {st.session_state.pin_1['loc'][1]:.4f}")
 
         st.markdown("---")
-        st.markdown("### 📍 Driving Distance")
+
+        # --- PIN 2 (DESTINATION) ---
+        st.markdown("#### 🔴 Destination (Pin 2)")
+        search_2 = st.text_input("Search Location 2", key="search_2_box", placeholder="e.g. Riyadh Industrial")
+        if st.button("Search Destination"):
+            res = search_osm(search_2)
+            if res:
+                st.session_state.pin_2 = {'loc': [res[0], res[1]], 'name': res[2].split(',')[0]}
+                st.session_state.map_center = [res[0], res[1]]
+                st.session_state.map_zoom = 10
+            else: st.error("Location 2 not found")
+            
+        if st.session_state.pin_2:
+            st.success(f"Selected: **{st.session_state.pin_2['name']}**")
+            st.caption(f"{st.session_state.pin_2['loc'][0]:.4f}, {st.session_state.pin_2['loc'][1]:.4f}")
+
+        st.markdown("---")
         
-        # Distance Calculator
-        p_en = st.selectbox("Origin", pickup_cities_en, key='map_p')
-        d_en = st.selectbox("Destination", dest_cities_en, index=1, key='map_d')
-        
-        # Calculate
-        dist_val, dist_src = get_distance(to_arabic_city(p_en), to_arabic_city(d_en))
-        
-        if dist_val > 0:
-            st.metric("Distance", f"{dist_val:,.0f} km", delta=dist_src)
-            st.caption(f"Est. Base Rate: ~{dist_val * 1.8:,.0f} SAR")
-        else:
-            st.warning("Distance not known.")
+        # --- CALCULATION ---
+        if st.session_state.pin_1 and st.session_state.pin_2:
+            dist_km = get_osrm_route(st.session_state.pin_1['loc'], st.session_state.pin_2['loc'])
+            if dist_km:
+                st.metric("🚗 Driving Distance", f"{dist_km:,.1f} km")
+                st.caption("Source: OpenStreetMap (OSRM)")
+            else:
+                st.warning("Could not calculate route (is it drivable?)")
 
     with col_map:
+        # Click Mode Selection
+        click_mode = st.radio("🖱️ Map Click Action:", ["Do Nothing", "Set Pin 1 (Origin)", "Set Pin 2 (Dest)"], horizontal=True)
+        
+        # Draw Map
         m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles="CartoDB positron")
         
-        # Add Search Pin
-        if st.session_state.pin_marker:
+        # Draw Pin 1
+        if st.session_state.pin_1:
             folium.Marker(
-                st.session_state.pin_marker['loc'],
-                popup=st.session_state.pin_marker['popup'],
-                icon=folium.Icon(color="red", icon="info-sign")
+                st.session_state.pin_1['loc'],
+                tooltip="Origin",
+                popup=st.session_state.pin_1['name'],
+                icon=folium.Icon(color="green", icon="play"),
+                draggable=False # Dragging not supported well in Streamlit loops
+            ).add_to(m)
+            
+        # Draw Pin 2
+        if st.session_state.pin_2:
+            folium.Marker(
+                st.session_state.pin_2['loc'],
+                tooltip="Destination",
+                popup=st.session_state.pin_2['name'],
+                icon=folium.Icon(color="red", icon="stop"),
+                draggable=False
             ).add_to(m)
 
-        # Draw Route Line (if distance exists)
-        p_coords = get_province_from_coordinates(24.0, 45.0) # Placeholder if you don't have city coords map
-        # Note: Drawing lines requires known coords for every city. 
-        # If you want lines, we need the CITY_COORDS dictionary from the previous step.
-        
+        # Draw Line if both exist
+        if st.session_state.pin_1 and st.session_state.pin_2:
+            folium.PolyLine(
+                [st.session_state.pin_1['loc'], st.session_state.pin_2['loc']],
+                color="blue", weight=3, opacity=0.7, dash_array='10'
+            ).add_to(m)
+            # Auto-fit bounds
+            m.fit_bounds([st.session_state.pin_1['loc'], st.session_state.pin_2['loc']], padding=(50, 50))
+
+        # Render Map & Capture Click
         st_data = st_folium(m, width="100%", height=600)
         
+        # Handle Map Clicks
         if st_data['last_clicked']:
-            c_lat, c_lon = st_data['last_clicked']['lat'], st_data['last_clicked']['lng']
-            prov, reg = get_province_from_coordinates(c_lat, c_lon)
-            st.info(f"📍 **Clicked:** {c_lat:.4f}, {c_lon:.4f}")
-            if prov: st.success(f"✅ Region: **{prov}** ({reg})")
-            else: st.warning("⚠️ Outside known Saudi provinces")
+            lat, lon = st_data['last_clicked']['lat'], st_data['last_clicked']['lng']
+            
+            # Logic to update pins based on click mode
+            if click_mode == "Set Pin 1 (Origin)":
+                st.session_state.pin_1 = {'loc': [lat, lon], 'name': 'Pinned Location'}
+                st.rerun() # Refresh to update UI immediately
+            elif click_mode == "Set Pin 2 (Dest)":
+                st.session_state.pin_2 = {'loc': [lat, lon], 'name': 'Pinned Location'}
+                st.rerun()
                 
 # ERROR LOG SECTION (Restored to exact snippet)
 error_log_csv = get_error_log_csv()

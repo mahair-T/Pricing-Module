@@ -589,6 +589,35 @@ def flush_matched_distances_to_sheet():
         st.session_state.flush_errors.append(f"Flush Error: {str(e)}")
         return False, 0
 
+def flush_matched_cities_to_sheet():
+    """Flush pending city matches to Google Sheet."""
+    if 'matched_cities_pending' not in st.session_state or len(st.session_state.matched_cities_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.matched_cities_pending
+    try:
+        worksheet = get_matched_cities_sheet()
+        if worksheet:
+            rows = []
+            for item in pending:
+                rows.append([
+                    item['timestamp'], item['original_input'], item['matched_canonical'],
+                    item['match_type'], str(item['confidence']), str(item['latitude']),
+                    str(item['longitude']), item['province'], item['region'],
+                    item['added_to_csv'], item['user'], item['source']
+                ])
+            if rows:
+                worksheet.append_rows(rows)
+            st.session_state.matched_cities_pending = []
+            return True, len(rows)
+    except Exception as e:
+        # Log error to session for visibility
+        if 'flush_errors' not in st.session_state:
+            st.session_state.flush_errors = []
+        st.session_state.flush_errors.append(f"City Flush Error: {str(e)}")
+        pass
+    return False, 0
+        
 def flush_append_sheet():
     """Flush pending append entries to Google Sheet."""
     if 'append_sheet_pending' not in st.session_state or len(st.session_state.append_sheet_pending) == 0:

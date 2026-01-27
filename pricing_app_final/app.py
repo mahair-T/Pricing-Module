@@ -4033,8 +4033,8 @@ with tab2:
         existing_distances = {k: v for k, v in distance_results.items() 
                             if v['distance'] > 0 and v['source'] != 'Missing'}
         
-        # UI: Dashboard Stats - Centered
-        _, c_stat1, c_stat2, c_refresh, _ = st.columns([1, 1, 1, 1, 1])
+        # UI: Dashboard Stats - Aligned with bottom navigation [1, 1, 1]
+        c_stat1, c_stat2, c_refresh = st.columns([1, 1, 1])
         
         with c_stat1:
             st.metric("⚠️ Missing Distances", len(missing_distances))

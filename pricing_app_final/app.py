@@ -274,6 +274,77 @@ def get_matched_distances_sheet():
     except Exception as e:
         return None
 
+def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en, immediate=True):
+    """
+    Log a missing distance to the MatchedDistances sheet for Google Maps lookup.
+    Only logs if this city pair isn't already in the sheet or pending queue.
+    
+    Args:
+        pickup_ar, dest_ar: Arabic city names
+        pickup_en, dest_en: English city names
+        immediate: If True, write to sheet immediately. If False, queue for batch write.
+    """
+    # Initialize pending queue if needed
+    if 'matched_distances_pending' not in st.session_state:
+        st.session_state.matched_distances_pending = []
+    
+    # Check if already in pending queue (both directions)
+    for item in st.session_state.matched_distances_pending:
+        if (item['pickup_ar'] == pickup_ar and item['dest_ar'] == dest_ar) or \
+           (item['pickup_ar'] == dest_ar and item['dest_ar'] == pickup_ar):
+            return False  # Already queued
+    
+    if immediate:
+        # Write immediately (for single-lane pricing)
+        try:
+            worksheet = get_matched_distances_sheet()
+            if not worksheet:
+                return False
+            
+            # Check if this pair already exists in sheet (check both directions)
+            existing = worksheet.get_all_values()
+            for row in existing[1:]:  # Skip header
+                if len(row) >= 5:
+                    if (row[1] == pickup_ar and row[2] == dest_ar) or \
+                       (row[1] == dest_ar and row[2] == pickup_ar):
+                        return False  # Already exists
+            
+            # Find next row
+            next_row = len(existing) + 1
+        
+            # 1. Build the GOOGLEMAPS_DISTANCE formula for Column F
+            formula = f'=GOOGLEMAPS_DISTANCE("{pickup_en}, Saudi Arabia", "{dest_en}, Saudi Arabia", "driving")'
+            
+            # 2. Build the Logic Formula for Column G
+            # Logic: IF(F is a number greater than 0, return F, else blank)
+            value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
+            
+            # Write the row
+            row_data = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                pickup_ar,
+                dest_ar,
+                pickup_en,
+                dest_en,
+                formula,    # Column F: The calculation
+                value_ref,  # Column G: The conditional check
+                'Pending',
+                'No'
+            ]
+            worksheet.update(f'A{next_row}:I{next_row}', [row_data], value_input_option='USER_ENTERED')
+            return True
+        except Exception as e:
+            return False
+    else:
+        # Queue for batch write (for bulk pricing)
+        st.session_state.matched_distances_pending.append({
+            'pickup_ar': pickup_ar,
+            'dest_ar': dest_ar,
+            'pickup_en': pickup_en,
+            'dest_en': dest_en
+        })
+        return True
+
 def get_matched_cities_sheet():
     """
     Get or create the MatchedCities sheet for logging city match resolutions.
@@ -3161,61 +3232,111 @@ with tab2:
         
         # Build resolution table
         st.markdown("#### Review and resolve each city:")
-        st.caption("Accept the suggested match, or provide coordinates for a new city.")
+        st.caption("Accept the suggested match, provide coordinates for a new city, or ignore to skip these routes.")
         
         for idx, (city_name, info) in enumerate(unmatched.items()):
             with st.expander(f"🏙️ **{city_name}** (appears in {len(info['rows'])} rows)", expanded=True):
                 fuzzy = fuzzy_results.get(city_name, {})
                 
-                col1, col2 = st.columns([1, 1])
+                # Resolution action selector
+                current_resolution = st.session_state.city_resolutions.get(city_name, {})
+                current_type = current_resolution.get('type', 'pending')
                 
-                with col1:
-                    st.caption(f"Column: {info['col']} | Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
-                    
-                    # Show fuzzy match suggestion
-                    if fuzzy.get('match_found'):
-                        confidence = fuzzy.get('confidence', 0)
-                        suggested = fuzzy.get('suggested_canonical', '')
-                        suggested_en = to_english_city(suggested)
-                        
-                        if confidence >= 90:
-                            st.success(f"✅ High confidence match: **{suggested_en}** ({confidence}%)")
-                        else:
-                            st.warning(f"⚠️ Possible match: **{suggested_en}** ({confidence}%)")
-                        
-                        # Show other matches if available
-                        all_matches = fuzzy.get('all_matches', [])
-                        if len(all_matches) > 1:
-                            with st.expander("Other possible matches"):
-                                for m in all_matches[1:4]:
-                                    st.caption(f"• {to_english_city(m['canonical'])} ({m['score']}%)")
-                    else:
-                        st.error("❌ No good match found - please provide coordinates for a new city")
+                action_options = ["🔍 Resolve", "⏭️ Ignore (skip routes)"]
+                action_idx = 1 if current_type == 'ignored' else 0
                 
-                with col2:
-                    # Resolution options
-                    resolution_key = f"res_{idx}"
+                action = st.radio(
+                    "Action",
+                    options=action_options,
+                    index=action_idx,
+                    key=f"action_{idx}",
+                    horizontal=True,
+                    label_visibility="collapsed"
+                )
+                
+                if action == "⏭️ Ignore (skip routes)":
+                    st.warning(f"⚠️ {len(info['rows'])} routes with this city will be **excluded** from pricing.")
+                    st.session_state.city_resolutions[city_name] = {
+                        'type': 'ignored',
+                        'rows': info['rows']
+                    }
+                else:
+                    # Clear ignored status if switching back
+                    if current_type == 'ignored':
+                        del st.session_state.city_resolutions[city_name]
                     
-                    if fuzzy.get('match_found'):
-                        accept = st.checkbox(f"Accept suggestion", 
-                                           value=fuzzy.get('confidence', 0) >= 90,
-                                           key=f"accept_{idx}")
+                    col1, col2 = st.columns([1, 1])
+                    
+                    with col1:
+                        st.caption(f"Column: {info['col']} | Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
                         
-                        if accept:
-                            st.session_state.city_resolutions[city_name] = {
-                                'type': 'fuzzy_match',
-                                'canonical': fuzzy.get('suggested_canonical'),
-                                'confidence': fuzzy.get('confidence'),
-                                'english': to_english_city(fuzzy.get('suggested_canonical'))
-                            }
+                        # Show fuzzy match suggestion
+                        if fuzzy.get('match_found'):
+                            confidence = fuzzy.get('confidence', 0)
+                            suggested = fuzzy.get('suggested_canonical', '')
+                            suggested_en = to_english_city(suggested)
+                            
+                            if confidence >= 90:
+                                st.success(f"✅ High confidence match: **{suggested_en}** ({confidence}%)")
+                            else:
+                                st.warning(f"⚠️ Possible match: **{suggested_en}** ({confidence}%)")
+                            
+                            # Show other matches if available
+                            all_matches = fuzzy.get('all_matches', [])
+                            if len(all_matches) > 1:
+                                with st.expander("Other possible matches"):
+                                    for m in all_matches[1:4]:
+                                        st.caption(f"• {to_english_city(m['canonical'])} ({m['score']}%)")
                         else:
-                            # Show coordinate input for new city
+                            st.error("❌ No good match found - please provide coordinates for a new city")
+                    
+                    with col2:
+                        # Resolution options
+                        if fuzzy.get('match_found'):
+                            accept = st.checkbox(f"Accept suggestion", 
+                                               value=fuzzy.get('confidence', 0) >= 90,
+                                               key=f"accept_{idx}")
+                            
+                            if accept:
+                                st.session_state.city_resolutions[city_name] = {
+                                    'type': 'fuzzy_match',
+                                    'canonical': fuzzy.get('suggested_canonical'),
+                                    'confidence': fuzzy.get('confidence'),
+                                    'english': to_english_city(fuzzy.get('suggested_canonical'))
+                                }
+                            else:
+                                # Not accepting suggestion - show coordinate input for new city
+                                st.markdown("**Add as new city:**")
+                                lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
+                                lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
+                                
+                                if lat != 0 and lon != 0:
+                                    # Auto-detect province
+                                    province, region = get_province_from_coordinates(lat, lon)
+                                    if province:
+                                        st.success(f"📍 Detected: {province} → {region}")
+                                    else:
+                                        st.warning("Could not detect province from coordinates")
+                                        region = st.selectbox("Select Region", 
+                                                             options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
+                                                             key=f"region_{idx}")
+                                        province = None
+                                    
+                                    st.session_state.city_resolutions[city_name] = {
+                                        'type': 'new_city',
+                                        'canonical': city_name,  # Use original as canonical
+                                        'latitude': lat,
+                                        'longitude': lon,
+                                        'province': province,
+                                        'region': region
+                                    }
+                        else:
+                            # No fuzzy match - must provide coordinates
                             st.markdown("**Add as new city:**")
                             lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
                             lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
                             
                             if lat != 0 and lon != 0:
-                                # Auto-detect province
                                 province, region = get_province_from_coordinates(lat, lon)
                                 if province:
                                     st.success(f"📍 Detected: {province} → {region}")
@@ -3228,44 +3349,24 @@ with tab2:
                                 
                                 st.session_state.city_resolutions[city_name] = {
                                     'type': 'new_city',
-                                    'canonical': city_name,  # Use original as canonical
+                                    'canonical': city_name,
                                     'latitude': lat,
                                     'longitude': lon,
                                     'province': province,
                                     'region': region
                                 }
-                    else:
-                        # Must provide coordinates
-                        st.markdown("**Add as new city:**")
-                        lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
-                        lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
-                        
-                        if lat != 0 and lon != 0:
-                            province, region = get_province_from_coordinates(lat, lon)
-                            if province:
-                                st.success(f"📍 Detected: {province} → {region}")
-                            else:
-                                st.warning("Could not detect province from coordinates")
-                                region = st.selectbox("Select Region", 
-                                                     options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
-                                                     key=f"region_{idx}")
-                                province = None
-                            
-                            st.session_state.city_resolutions[city_name] = {
-                                'type': 'new_city',
-                                'canonical': city_name,
-                                'latitude': lat,
-                                'longitude': lon,
-                                'province': province,
-                                'region': region
-                            }
         
-        # Check if all resolved
+        # Check if all resolved (including ignored)
         resolved_count = len(st.session_state.city_resolutions)
+        ignored_count = sum(1 for r in st.session_state.city_resolutions.values() if r.get('type') == 'ignored')
+        actual_resolved = resolved_count - ignored_count
         total_unmatched = len(unmatched)
         
         st.markdown("---")
-        st.markdown(f"**Resolved: {resolved_count}/{total_unmatched}**")
+        if ignored_count > 0:
+            st.markdown(f"**Resolved: {actual_resolved}/{total_unmatched}** | **Ignored: {ignored_count}**")
+        else:
+            st.markdown(f"**Resolved: {resolved_count}/{total_unmatched}**")
         
         col1, col2, col3 = st.columns([1, 2, 1])
         
@@ -3275,17 +3376,24 @@ with tab2:
                 st.rerun()
         
         with col2:
+            # Allow proceeding when all cities are resolved OR ignored
+            can_proceed = resolved_count >= total_unmatched
             if st.button("▶️ Apply Resolutions & Check Distances", type="primary", 
-                        use_container_width=True, disabled=resolved_count < total_unmatched):
-                if resolved_count < total_unmatched:
-                    st.error("Please resolve all unmatched cities before proceeding")
+                        use_container_width=True, disabled=not can_proceed):
+                if not can_proceed:
+                    st.error("Please resolve or ignore all unmatched cities before proceeding")
                 else:
                     # Apply resolutions
                     resolutions = st.session_state.city_resolutions
                     new_entries = []
+                    ignored_rows = set()
                     
                     for city_name, resolution in resolutions.items():
-                        if resolution['type'] == 'fuzzy_match':
+                        if resolution['type'] == 'ignored':
+                            # Track rows to skip
+                            for row_num in resolution.get('rows', []):
+                                ignored_rows.add(row_num)
+                        elif resolution['type'] == 'fuzzy_match':
                             # Log fuzzy match
                             log_city_match(
                                 original_input=city_name,
@@ -3313,7 +3421,7 @@ with tab2:
                                 user=username,
                                 immediate=False
                             )
-                        else:
+                        elif resolution['type'] == 'new_city':
                             # New city
                             log_city_match(
                                 original_input=city_name,
@@ -3356,22 +3464,27 @@ with tab2:
                     flush_matched_cities_to_sheet()
                     flush_append_sheet()
                     
-                    # Update parsed rows with new canonical names
+                    # Update parsed rows with new canonical names and mark ignored rows
                     parsed_rows = wizard_data['parsed_rows']
                     for row in parsed_rows:
-                        if not row['pickup_ok']:
-                            res = resolutions.get(row['pickup_raw'])
-                            if res:
-                                row['pickup_ar'] = res['canonical']
-                                row['pickup_ok'] = True
-                        if not row['dest_ok']:
-                            res = resolutions.get(row['dest_raw'])
-                            if res:
-                                row['dest_ar'] = res['canonical']
-                                row['dest_ok'] = True
+                        # Check if this row should be ignored
+                        row['ignored'] = row['row_num'] in ignored_rows
+                        
+                        if not row['ignored']:
+                            if not row['pickup_ok']:
+                                res = resolutions.get(row['pickup_raw'])
+                                if res and res['type'] != 'ignored':
+                                    row['pickup_ar'] = res['canonical']
+                                    row['pickup_ok'] = True
+                            if not row['dest_ok']:
+                                res = resolutions.get(row['dest_raw'])
+                                if res and res['type'] != 'ignored':
+                                    row['dest_ar'] = res['canonical']
+                                    row['dest_ok'] = True
                     
                     st.session_state.bulk_wizard_data['parsed_rows'] = parsed_rows
                     st.session_state.bulk_wizard_data['applied_resolutions'] = resolutions
+                    st.session_state.bulk_wizard_data['ignored_rows'] = ignored_rows
                     
                     # Move to distance review
                     st.session_state.bulk_wizard_step = 2
@@ -3391,14 +3504,21 @@ with tab2:
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
         username = wizard_data.get('username', '')
+        ignored_rows = wizard_data.get('ignored_rows', set())
+        
+        # Filter out ignored rows
+        active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
+        
+        if ignored_rows:
+            st.info(f"ℹ️ {len(ignored_rows)} routes were ignored and will be excluded from pricing.")
         
         # Calculate distances for all routes
         if 'distance_results' not in st.session_state.bulk_wizard_data:
             st.info("Checking distances for all routes...")
             
-            # Get unique city pairs
+            # Get unique city pairs (only for active rows)
             city_pairs = {}
-            for row in parsed_rows:
+            for row in active_rows:
                 pair_key = (row['pickup_ar'], row['dest_ar'])
                 if pair_key not in city_pairs:
                     # Check if distance exists
@@ -3577,106 +3697,119 @@ with tab2:
         selected_vehicles = wizard_data.get('selected_vehicles', ['Flatbed Trailer'])
         final_distances = wizard_data.get('final_distances', {})
         username = wizard_data.get('username', '')
+        ignored_rows = wizard_data.get('ignored_rows', set())
         
-        # Generate pricing
-        if 'bulk_results' not in st.session_state or st.session_state.get('bulk_results_stale', True):
-            results = []
-            
-            progress = st.progress(0)
-            status = st.empty()
-            
-            for i, row in enumerate(parsed_rows):
-                pickup_ar = row['pickup_ar']
-                dest_ar = row['dest_ar']
-                pair_key = (pickup_ar, dest_ar)
-                
-                # Get distance
-                dist_override = final_distances.get(pair_key, row.get('dist_override'))
-                
-                # Price for each selected vehicle
-                for v_en in selected_vehicles:
-                    v_ar = to_arabic_vehicle(v_en)
-                    
-                    result = lookup_route_stats(
-                        pickup_ar, dest_ar, v_ar,
-                        dist_override=dist_override
-                    )
-                    result['CSV_Row'] = row['row_num']
-                    results.append(result)
-                
-                progress.progress((i + 1) / len(parsed_rows))
-                status.text(f"Pricing {i + 1}/{len(parsed_rows)}: {row['pickup_raw']} → {row['dest_raw']}")
-            
-            status.text("✅ Complete!")
-            st.session_state.bulk_results = pd.DataFrame(results)
-            st.session_state.bulk_results_stale = False
-            
-            # Flush logs
-            flush_error_log_to_sheet()
-            flush_matched_distances_to_sheet()
+        # Filter out ignored rows
+        active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
         
-        # Display results
-        res_df = st.session_state.bulk_results
+        if ignored_rows:
+            st.info(f"ℹ️ {len(ignored_rows)} routes were ignored and excluded from pricing.")
         
-        st.success(f"Generated pricing for **{len(res_df)}** route-vehicle combinations")
-        
-        st.dataframe(res_df, use_container_width=True, hide_index=True)
-        
-        # Save section
-        st.markdown("---")
-        st.subheader("💾 Save Results")
-        
-        rfq_sheet_url = st.secrets.get('RFQ_url', '')
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.download_button(
-                "📥 Download CSV",
-                res_df.to_csv(index=False),
-                "pricing_results.csv",
-                "text/csv",
-                type="primary",
-                use_container_width=True
-            )
-        
-        with col2:
-            if rfq_sheet_url:
-                default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
-                
-                if st.button("☁️ Upload to Google Sheet", use_container_width=True):
-                    progress = st.progress(0)
-                    status = st.empty()
-                    
-                    def update_progress(done, total, batch):
-                        progress.progress(done / total)
-                        status.text(f"Uploading {done}/{total}...")
-                    
-                    ok, msg = upload_to_rfq_sheet(res_df, sheet_name, progress_callback=update_progress)
-                    progress.progress(1.0)
-                    status.empty()
-                    
-                    if ok:
-                        st.success(msg)
-                        st.link_button("🔗 Open Sheet", rfq_sheet_url)
-                    else:
-                        st.error(msg)
-        
-        # Navigation
-        st.markdown("---")
-        col1, col2 = st.columns([1, 3])
-        
-        with col1:
-            if st.button("⬅️ Back to Distances", use_container_width=True):
-                st.session_state.bulk_results_stale = True
-                st.session_state.bulk_wizard_step = 2
-                st.rerun()
-        
-        with col2:
-            if st.button("🔄 Start New Bulk Lookup", type="secondary", use_container_width=True):
+        if not active_rows:
+            st.warning("⚠️ All routes were ignored. No pricing to generate.")
+            if st.button("🔄 Start New Bulk Lookup", use_container_width=True):
                 reset_wizard()
                 st.rerun()
+        else:
+            # Generate pricing
+            if 'bulk_results' not in st.session_state or st.session_state.get('bulk_results_stale', True):
+                results = []
+                
+                progress = st.progress(0)
+                status = st.empty()
+                
+                for i, row in enumerate(active_rows):
+                    pickup_ar = row['pickup_ar']
+                    dest_ar = row['dest_ar']
+                    pair_key = (pickup_ar, dest_ar)
+                    
+                    # Get distance
+                    dist_override = final_distances.get(pair_key, row.get('dist_override'))
+                    
+                    # Price for each selected vehicle
+                    for v_en in selected_vehicles:
+                        v_ar = to_arabic_vehicle(v_en)
+                        
+                        result = lookup_route_stats(
+                            pickup_ar, dest_ar, v_ar,
+                            dist_override=dist_override
+                        )
+                        result['CSV_Row'] = row['row_num']
+                        results.append(result)
+                    
+                    progress.progress((i + 1) / len(active_rows))
+                    status.text(f"Pricing {i + 1}/{len(active_rows)}: {row['pickup_raw']} → {row['dest_raw']}")
+                
+                status.text("✅ Complete!")
+                st.session_state.bulk_results = pd.DataFrame(results)
+                st.session_state.bulk_results_stale = False
+                
+                # Flush logs
+                flush_error_log_to_sheet()
+                flush_matched_distances_to_sheet()
+            
+            # Display results
+            res_df = st.session_state.bulk_results
+            
+            st.success(f"Generated pricing for **{len(res_df)}** route-vehicle combinations")
+            
+            st.dataframe(res_df, use_container_width=True, hide_index=True)
+            
+            # Save section
+            st.markdown("---")
+            st.subheader("💾 Save Results")
+            
+            rfq_sheet_url = st.secrets.get('RFQ_url', '')
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.download_button(
+                    "📥 Download CSV",
+                    res_df.to_csv(index=False),
+                    "pricing_results.csv",
+                    "text/csv",
+                    type="primary",
+                    use_container_width=True
+                )
+            
+            with col2:
+                if rfq_sheet_url:
+                    default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                    sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
+                    
+                    if st.button("☁️ Upload to Google Sheet", use_container_width=True):
+                        progress = st.progress(0)
+                        status = st.empty()
+                        
+                        def update_progress(done, total, batch):
+                            progress.progress(done / total)
+                            status.text(f"Uploading {done}/{total}...")
+                        
+                        ok, msg = upload_to_rfq_sheet(res_df, sheet_name, progress_callback=update_progress)
+                        progress.progress(1.0)
+                        status.empty()
+                        
+                        if ok:
+                            st.success(msg)
+                            st.link_button("🔗 Open Sheet", rfq_sheet_url)
+                        else:
+                            st.error(msg)
+            
+            # Navigation
+            st.markdown("---")
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                if st.button("⬅️ Back to Distances", use_container_width=True):
+                    st.session_state.bulk_results_stale = True
+                    st.session_state.bulk_wizard_step = 2
+                    st.rerun()
+            
+            with col2:
+                if st.button("🔄 Start New Bulk Lookup", type="secondary", use_container_width=True):
+                    reset_wizard()
+                    st.rerun()
     # ============================================
     # MASTER GRID GENERATOR
     # Generates pricing for all city-to-city combinations

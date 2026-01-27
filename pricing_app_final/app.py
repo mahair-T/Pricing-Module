@@ -3278,53 +3278,68 @@ with tab2:
     # STEP 0: Upload & Username
     # ============================================
     if current_step == 0:
-        st.markdown("### Step 1: Upload CSV & Enter Your Name")
+        st.markdown("<h3 style='text-align: center;'>Step 1: Upload Data</h3>", unsafe_allow_html=True)
         
+        # 1. Description and Template Button
         st.markdown("""
-        **Columns (by position, names ignored):**
-        1. **Pickup City** (required)
-        2. **Destination City** (required)
-        3. **Distance** (optional - overrides lookup)
-        4. **Vehicle Type** (optional - default: Flatbed Trailer)
-        """)
+        <div style='text-align: center; margin-bottom: 10px;'>
+        Prepare your CSV with the following columns (order matters, names ignored):<br>
+        <b>1. Pickup City</b> &nbsp;|&nbsp; <b>2. Destination City</b> &nbsp;|&nbsp; <b>3. Distance</b> (Optional) &nbsp;|&nbsp; <b>4. Vehicle</b> (Optional)
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Username input
-        username = st.text_input("👤 Your Name", key='bulk_username', 
-                                  placeholder="Enter your name for tracking",
-                                  help="Your name will be logged with any changes you make")
+        # Centered Template Button
+        c_fill1, c_temp, c_fill2 = st.columns([1, 2, 1])
+        with c_temp:
+            if st.button("📋 Open Google Sheets Template", use_container_width=True):
+                template_df = pd.DataFrame({
+                    'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
+                    'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
+                    'Distance': ['', '', '450'],
+                    'Vehicle_Type': ['Flatbed Trailer', '', '']
+                })
+                success, msg = populate_rfq_template_sheet(template_df)
+                if success:
+                    rfq_url = st.secrets.get('RFQ_url', '')
+                    st.toast(msg, icon="✅")
+                    if rfq_url:
+                        st.markdown(f"<div style='text-align: center'><a href='{rfq_url}' target='_blank'>🔗 Click here to open Sheet</a></div>", unsafe_allow_html=True)
+                else:
+                    st.error(msg)
         
-        # Template button
-        if st.button("📋 Open Template in Google Sheets"):
-            template_df = pd.DataFrame({
-                'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
-                'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
-                'Distance': ['', '', '450'],
-                'Vehicle_Type': ['Flatbed Trailer', '', '']
-            })
-            success, msg = populate_rfq_template_sheet(template_df)
-            if success:
-                rfq_url = st.secrets.get('RFQ_url', '')
-                st.success(msg)
-                if rfq_url:
-                    st.markdown(f"[🔗 Open Template Sheet]({rfq_url})")
-            else:
-                st.error(msg)
+        st.markdown("---")
+
+        # 2. File Uploader
+        upl = st.file_uploader("Upload CSV File", type=['csv'], key='bulk_csv_upload', label_visibility="collapsed")
         
-        # File uploader
-        upl = st.file_uploader("Upload CSV", type=['csv'], key='bulk_csv_upload')
-        
+        if not upl:
+            st.info("👆 Please upload a CSV file to begin.")
+
         if upl:
             try:
                 r_df = pd.read_csv(upl)
-                st.success(f"✅ Loaded {len(r_df)} routes")
                 
-                with st.expander("📋 Preview Data"):
-                    st.dataframe(r_df.head(10), use_container_width=True)
+                # Layout: Data Preview on left, User Details on right
+                col_data, col_details = st.columns([2, 1])
                 
-                # Vehicle type selection
-                st.markdown("##### 🚛 Vehicle Types")
-                st.caption("Select vehicle types to price. Multiple selections will create multiple pricing rows per route.")
+                with col_data:
+                    st.caption(f"✅ Loaded {len(r_df)} rows")
+                    st.dataframe(r_df.head(5), use_container_width=True, height=150)
+
+                with col_details:
+                    st.markdown("##### 👤 User Details")
+                    username = st.text_input("Enter Your Name", key='bulk_username', 
+                                              placeholder="Required for tracking",
+                                              help="Your name will be logged with any changes you make")
+                    if not username:
+                        st.caption("⚠️ Name required to proceed")
                 
+                st.markdown("---")
+
+                # 3. Vehicle Selection
+                st.markdown("<h5 style='text-align: center;'>🚛 Select Vehicles to Price</h5>", unsafe_allow_html=True)
+                
+                # Centered checkboxes
                 v_cols = st.columns(4)
                 selected_vehicles = []
                 for i, v_en in enumerate(vehicle_types_en):
@@ -3333,20 +3348,30 @@ with tab2:
                             selected_vehicles.append(v_en)
                 
                 if not selected_vehicles:
-                    st.warning("Please select at least one vehicle type")
+                    st.warning("⚠️ Please select at least one vehicle type.")
                 
-                # Proceed button
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    if st.button("▶️ Analyze Cities", type="primary", use_container_width=True,
-                                disabled=not username or not selected_vehicles):
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # 4. Action Buttons (Equal Width for balance)
+                btn_col1, btn_col2 = st.columns(2)
+                
+                with btn_col1:
+                    if st.button("🔄 Reset / Clear", use_container_width=True):
+                        reset_wizard()
+                        st.rerun()
+
+                with btn_col2:
+                    # Logic to disable button if requirements aren't met
+                    is_ready = username and selected_vehicles
+                    
+                    if st.button("▶️ Analyze Cities", type="primary", use_container_width=True, disabled=not is_ready):
                         if not username:
-                            st.error("Please enter your name")
+                            st.error("Please enter your name above.")
                         elif not selected_vehicles:
-                            st.error("Please select at least one vehicle type")
+                            st.error("Please select at least one vehicle type.")
                         else:
-                            # Parse the CSV and find unmatched cities
-                            unmatched_cities = {}  # {original_name: {rows: [...], col: 'Pickup'/'Destination'}}
+                            # --- PROCESSING LOGIC STARTS HERE ---
+                            unmatched_cities = {} 
                             parsed_rows = []
                             
                             for i in range(len(r_df)):
@@ -3379,190 +3404,94 @@ with tab2:
                                         unmatched_cities[p_raw] = {'rows': [], 'col': 'Pickup'}
                                     unmatched_cities[p_raw]['rows'].append(i + 1)
                                     
-                                    # =======================================================
-                                    # 👇 FIX 1 START: Explicitly log Pickup Error
-                                    # =======================================================
                                     log_exception('unmatched_city', {
-                                        'pickup_city': p_raw,      # Force value to Column C
-                                        'destination_city': '',    # Force Column D empty
-                                        'original_value': p_raw, 
-                                        'column': 'Pickup', 
-                                        'row_num': i + 1
+                                        'pickup_city': p_raw, 'destination_city': '', 'original_value': p_raw, 
+                                        'column': 'Pickup', 'row_num': i + 1
                                     }, immediate=False)
-                                    # =======================================================
-                                    # 👆 FIX 1 END
-                                    # =======================================================
                                 
                                 if not d_ok and d_raw:
                                     if d_raw not in unmatched_cities:
                                         unmatched_cities[d_raw] = {'rows': [], 'col': 'Destination'}
                                     unmatched_cities[d_raw]['rows'].append(i + 1)
                                 
-                                    # =======================================================
-                                    # 👇 FIX 1 START: Explicitly log Destination Error
-                                    # =======================================================
                                     log_exception('unmatched_city', {
-                                        'pickup_city': '',         # Force Column C empty
-                                        'destination_city': d_raw, # Force value to Column D
-                                        'original_value': d_raw, 
-                                        'column': 'Destination', 
-                                        'row_num': i + 1
+                                        'pickup_city': '', 'destination_city': d_raw, 'original_value': d_raw, 
+                                        'column': 'Destination', 'row_num': i + 1
                                     }, immediate=False)
-                                    # =======================================================
-                                    # 👆 FIX 1 END
-                                    # =======================================================
                                 
                                 parsed_rows.append({
-                                    'row_num': i + 1,
-                                    'pickup_raw': p_raw,
-                                    'dest_raw': d_raw,
-                                    'pickup_ar': p_ar,
-                                    'dest_ar': d_ar,
-                                    'pickup_ok': p_ok,
-                                    'dest_ok': d_ok,
-                                    'dist_override': dist_override,
-                                    'vehicle_raw': v_raw
+                                    'row_num': i + 1, 'pickup_raw': p_raw, 'dest_raw': d_raw,
+                                    'pickup_ar': p_ar, 'dest_ar': d_ar, 'pickup_ok': p_ok, 'dest_ok': d_ok,
+                                    'dist_override': dist_override, 'vehicle_raw': v_raw
                                 })
                             
-                            # Log missing distances EARLY for matched city pairs
-                            # This allows Google Sheets to start calculating while user resolves cities
+                            # Log missing distances for matched cities immediately
                             matched_pairs_checked = set()
                             for row in parsed_rows:
                                 if row['pickup_ok'] and row['dest_ok'] and not row.get('dist_override'):
                                     pair_key = (row['pickup_ar'], row['dest_ar'])
                                     if pair_key not in matched_pairs_checked:
                                         matched_pairs_checked.add(pair_key)
-                                        # Check if distance exists, log if missing
-                                        dist, source = get_distance(
-                                            row['pickup_ar'], row['dest_ar'], 
-                                            immediate_log=False
-                                        )
+                                        get_distance(row['pickup_ar'], row['dest_ar'], immediate_log=False)
                             
-                            # =======================================================
-                            # 👇 FIX 2 START: Flush logs to sheets BEFORE wizard moves on
-                            # =======================================================
+                            # Flush logs
                             dist_flushed_ok, dist_flushed_count = flush_matched_distances_to_sheet()
                             err_flushed_ok, err_flushed_count = flush_error_log_to_sheet()
                             
-                            # Feedback Logic to show user what happened
                             msgs = []
-                            if dist_flushed_count > 0:
-                                msgs.append(f"✅ Logged {dist_flushed_count} missing distances")
-                            if err_flushed_count > 0:
-                                msgs.append(f"⚠️ Logged {err_flushed_count} errors to sheet")
-                                
-                            if msgs:
-                                st.session_state['last_distance_flush'] = " | ".join(msgs)
-                            elif not dist_flushed_ok or not err_flushed_ok:
-                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush logs to sheets"
-                            else:
-                                st.session_state['last_distance_flush'] = "ℹ️ No new issues to log"
-                            # =======================================================
-                            # 👆 FIX 2 END
-                            # =======================================================
+                            if dist_flushed_count > 0: msgs.append(f"✅ Logged {dist_flushed_count} missing distances")
+                            if err_flushed_count > 0: msgs.append(f"⚠️ Logged {err_flushed_count} errors")
+                            st.session_state['last_distance_flush'] = " | ".join(msgs) if msgs else "ℹ️ No new issues to log"
                             
                             # Store in session state
                             st.session_state.bulk_wizard_data = {
-                                'username': username,
-                                'selected_vehicles': selected_vehicles,
-                                'parsed_rows': parsed_rows,
-                                'unmatched_cities': unmatched_cities,
+                                'username': username, 'selected_vehicles': selected_vehicles,
+                                'parsed_rows': parsed_rows, 'unmatched_cities': unmatched_cities,
                                 'original_df': r_df
                             }
                             
                             # Move to next step
                             if unmatched_cities:
-                                # Run fuzzy matching for all unmatched
+                                # Run fuzzy matching
                                 fuzzy_results = {}
                                 if RAPIDFUZZ_AVAILABLE:
                                     fuzzy_results = batch_fuzzy_match_cities(list(unmatched_cities.keys()), threshold=80)
                                     st.session_state.bulk_wizard_data['fuzzy_results'] = fuzzy_results
                                 
-                                # ============================================
-                                # GOOGLE GEOCODING FOR CITIES WITHOUT FUZZY MATCH
-                                # ============================================
-                                # Find cities that don't have a good fuzzy match
+                                # Google Geocoding for poor matches
                                 cities_needing_geocode = []
                                 for city_name in unmatched_cities.keys():
                                     fuzzy = fuzzy_results.get(city_name, {})
-                                    # If no fuzzy match or low confidence, try Google geocoding
                                     if not fuzzy.get('match_found') or fuzzy.get('confidence', 0) < 80:
                                         cities_needing_geocode.append(city_name)
                                 
                                 if cities_needing_geocode:
-                                    # Write to GeocodeLookup sheet for Google Maps API
-                                    status_placeholder = st.empty()
-                                    status_placeholder.info(f"🌍 Geocoding {len(cities_needing_geocode)} cities via Google Maps...")
-                                    
-                                    success, count_written, start_row = write_cities_for_geocoding(cities_needing_geocode)
-                                    
-                                    if success:
-                                        # Wait for Google API to process (always wait to allow formulas to calculate)
-                                        import time
-                                        for remaining in range(10, 0, -1):
-                                            status_placeholder.info(f"⏳ Waiting for Google Maps API... {remaining}s")
-                                            time.sleep(1)
-                                        
-                                        # Read back results
-                                        google_results = read_geocode_results(cities_needing_geocode)
-                                        st.session_state.bulk_wizard_data['google_suggestions'] = google_results
-                                        
-                                        # Count successful geocodes
-                                        successful = sum(1 for r in google_results.values() if r.get('success'))
-                                        if count_written > 0:
-                                            status_placeholder.success(f"✅ Google found {successful}/{len(cities_needing_geocode)} cities ({count_written} newly sent)")
+                                    with st.spinner(f"🌍 Geocoding {len(cities_needing_geocode)} cities via Google Maps..."):
+                                        success, count_written, start_row = write_cities_for_geocoding(cities_needing_geocode)
+                                        if success:
+                                            import time
+                                            time.sleep(3) # Wait for sheets formula
+                                            google_results = read_geocode_results(cities_needing_geocode)
+                                            st.session_state.bulk_wizard_data['google_suggestions'] = google_results
                                         else:
-                                            status_placeholder.success(f"✅ Google found {successful}/{len(cities_needing_geocode)} city suggestions")
-                                    else:
-                                        st.session_state.bulk_wizard_data['google_suggestions'] = {}
-                                        status_placeholder.warning("⚠️ Could not connect to Google Sheets for geocoding")
+                                            st.session_state.bulk_wizard_data['google_suggestions'] = {}
                                 else:
                                     st.session_state.bulk_wizard_data['google_suggestions'] = {}
                                 
-                                # ============================================
-                                # ORDER UNMATCHED CITIES FOR DISPLAY
-                                # Priority: 1) Google matches, 2) Fuzzy matches, 3) No matches
-                                # ============================================
+                                # Order results
                                 google_suggestions = st.session_state.bulk_wizard_data.get('google_suggestions', {})
+                                google_matched = {k: v for k, v in unmatched_cities.items() if google_suggestions.get(k, {}).get('success')}
+                                fuzzy_matched = {k: v for k, v in unmatched_cities.items() if fuzzy_results.get(k, {}).get('match_found') and k not in google_matched}
+                                no_match = {k: v for k, v in unmatched_cities.items() if k not in google_matched and k not in fuzzy_matched}
                                 
-                                google_matched = {}
-                                fuzzy_matched = {}
-                                no_match = {}
-                                
-                                for city_name, info in unmatched_cities.items():
-                                    has_google = google_suggestions.get(city_name, {}).get('success', False)
-                                    has_fuzzy = fuzzy_results.get(city_name, {}).get('match_found', False)
-                                    
-                                    if has_google:
-                                        google_matched[city_name] = info
-                                    elif has_fuzzy:
-                                        fuzzy_matched[city_name] = info
-                                    else:
-                                        no_match[city_name] = info
-                                
-                                # Rebuild ordered dict
-                                ordered_unmatched = {}
-                                ordered_unmatched.update(google_matched)
-                                ordered_unmatched.update(fuzzy_matched)
-                                ordered_unmatched.update(no_match)
-                                
+                                ordered_unmatched = {**google_matched, **fuzzy_matched, **no_match}
                                 st.session_state.bulk_wizard_data['unmatched_cities'] = ordered_unmatched
-                                st.session_state.bulk_wizard_data['match_counts'] = {
-                                    'google': len(google_matched),
-                                    'fuzzy': len(fuzzy_matched),
-                                    'none': len(no_match)
-                                }
+                                st.session_state.bulk_wizard_data['match_counts'] = {'google': len(google_matched), 'fuzzy': len(fuzzy_matched), 'none': len(no_match)}
                                 
                                 st.session_state.bulk_wizard_step = 1
                             else:
-                                # No unmatched cities, skip to distance review
                                 st.session_state.bulk_wizard_step = 2
                             st.rerun()
-                
-                with col2:
-                    if st.button("🔄 Reset", use_container_width=True):
-                        reset_wizard()
-                        st.rerun()
                         
             except Exception as e:
                 st.error(f"Error reading CSV: {e}")

@@ -3637,7 +3637,19 @@ with tab2:
                 st.session_state['step2_distance_flush'] = f"📏 Logged {flush_count} missing distances for Google Maps lookup"
             
             st.session_state.bulk_wizard_data['distance_results'] = city_pairs
-            st.rerun()
+            
+            # --- FIX STARTS HERE ---
+            # ALWAYS check for pending items in Step 2, not just on first load
+            # This ensures that if the first flush failed, we retry now.
+            if 'matched_distances_pending' in st.session_state and st.session_state.matched_distances_pending:
+                flush_ok, flush_count = flush_matched_distances_to_sheet()
+                if flush_count > 0:
+                    st.toast(f"✅ Sent {flush_count} missing distances to Google Sheet for lookup", icon="📏")
+            
+            # Force rerun ONLY if we just initialized data (to clear the loading spinner)
+            if 'distance_results' not in st.session_state.bulk_wizard_data:
+                 st.rerun()
+            # --- FIX ENDS HERE ---
         
         # Show Step 2 flush result
         if 'step2_distance_flush' in st.session_state:

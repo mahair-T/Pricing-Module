@@ -3892,6 +3892,8 @@ with tab2:
     # STEP 2: Distance Review
     # ============================================
     elif current_step == 2:
+        st.markdown("<h3 style='text-align: center;'>Step 3: Review Distances</h3>", unsafe_allow_html=True)
+        
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
         username = wizard_data.get('username', '')
@@ -3899,22 +3901,6 @@ with tab2:
         
         # Filter out ignored rows
         active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
-        
-        # TOP NAVIGATION BAR (before any data loading)
-        nav_cols = st.columns([1, 3, 1])
-        with nav_cols[0]:
-            if st.button("⬅️ Back", key="step2_back_top", use_container_width=True):
-                st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
-                st.rerun()
-        with nav_cols[1]:
-            # This button will be enabled/disabled based on data loaded below
-            step2_continue = st.button("▶️ Generate Pricing", type="primary", 
-                        key="step2_next_top", use_container_width=True)
-        with nav_cols[2]:
-            st.empty()
-        
-        st.markdown("---")
-        st.markdown("### 📏 Review Distances")
         
         if ignored_rows:
             st.caption(f"ℹ️ {len(ignored_rows)} routes ignored and excluded from pricing.")
@@ -4047,15 +4033,30 @@ with tab2:
         existing_distances = {k: v for k, v in distance_results.items() 
                             if v['distance'] > 0 and v['source'] != 'Missing'}
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.info(f"Found **{len(missing_distances)}** routes needing distance lookup, **{len(existing_distances)}** with existing distances.")
-        with col2:
-            if st.button("🔄 Refresh from Sheets", help="Re-check Google Sheets for newly resolved distances"):
+        # UI: Dashboard Stats
+        st.markdown("""
+        <style>
+            .dist-box { border: 1px solid #e0e0e0; border-radius: 5px; padding: 10px; text-align: center; }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        c_stat1, c_stat2, c_refresh = st.columns([1, 1, 1])
+        
+        with c_stat1:
+            st.metric("⚠️ Missing Distances", len(missing_distances))
+        
+        with c_stat2:
+            st.metric("✅ Ready to Price", len(existing_distances))
+            
+        with c_refresh:
+            st.markdown("<br>", unsafe_allow_html=True)  # Align with metrics
+            if st.button("🔄 Refresh from Sheets", use_container_width=True, help="Re-check Google Sheets for newly resolved distances"):
                 # Clear distance results to force re-check
                 if 'distance_results' in st.session_state.bulk_wizard_data:
                     del st.session_state.bulk_wizard_data['distance_results']
                 st.rerun()
+
+        st.markdown("---")
         
         # Initialize distance edits state
         if 'distance_edits' not in st.session_state:
@@ -4063,8 +4064,7 @@ with tab2:
         
         # Show missing distances first (needing attention)
         if missing_distances:
-            st.markdown("#### ⚠️ Routes Needing Distances")
-            st.caption("These routes are missing distances. Enter values manually or wait for Google Maps API.")
+            st.markdown("#### ⚠️ Routes Needing Input")
             
             for pair_key, info in missing_distances.items():
                 with st.expander(f"📏 {info['pickup_en']} → {info['dest_en']} ({len(info['rows'])} routes)", expanded=True):
@@ -4099,24 +4099,22 @@ with tab2:
         
         # Show existing distances (for review/edit)
         if existing_distances:
-            st.markdown("#### ✅ Routes with Distances")
-            st.caption("Review and edit if needed.")
-            
-            # Create a dataframe for display
-            dist_df = pd.DataFrame([
-                {
-                    'From': info['pickup_en'],
-                    'To': info['dest_en'],
-                    'Distance (km)': info['distance'],
-                    'Source': info['source'],
-                    'Routes': len(info['rows'])
-                }
-                for info in existing_distances.values()
-            ])
-            
-            st.dataframe(dist_df, use_container_width=True, hide_index=True)
-            
-            with st.expander("Edit existing distances"):
+            with st.expander(f"✅ View {len(existing_distances)} Resolved Distances", expanded=False):
+                # Create a dataframe for display
+                dist_df = pd.DataFrame([
+                    {
+                        'From': info['pickup_en'],
+                        'To': info['dest_en'],
+                        'Distance (km)': info['distance'],
+                        'Source': info['source'],
+                        'Routes': len(info['rows'])
+                    }
+                    for info in existing_distances.values()
+                ])
+                
+                st.dataframe(dist_df, use_container_width=True, hide_index=True)
+                
+                st.markdown("##### Edit Existing")
                 for pair_key, info in existing_distances.items():
                     col1, col2 = st.columns([3, 2])
                     with col1:
@@ -4135,14 +4133,14 @@ with tab2:
                         if new_dist != info['distance']:
                             st.session_state.distance_edits[pair_key] = new_dist
         
-        # Navigation
-        st.markdown("---")
-        
         # Check if all missing distances are resolved
         all_resolved = all(
             pair_key in st.session_state.distance_edits or info['user_override']
             for pair_key, info in missing_distances.items()
         )
+        
+        # Navigation
+        st.markdown("---")
         
         # =========================================================
         # FIX START: Symmetrical Button Layout & Sizing
@@ -4212,6 +4210,8 @@ with tab2:
     # STEP 3: Final Pricing
     # ============================================
     elif current_step == 3:
+        st.markdown("<h3 style='text-align: center;'>Step 4: Final Pricing</h3>", unsafe_allow_html=True)
+
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
         selected_vehicles = wizard_data.get('selected_vehicles', ['Flatbed Trailer'])
@@ -4221,23 +4221,6 @@ with tab2:
         
         # Filter out ignored rows
         active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
-        
-        # TOP NAVIGATION BAR
-        nav_cols = st.columns([1, 2, 2])
-        with nav_cols[0]:
-            if st.button("⬅️ Back", key="step3_back_top", use_container_width=True):
-                st.session_state.bulk_results_stale = True
-                st.session_state.bulk_wizard_step = 2
-                st.rerun()
-        with nav_cols[1]:
-            if st.button("🔄 New Lookup", key="step3_reset_top", use_container_width=True):
-                reset_wizard()
-                st.rerun()
-        with nav_cols[2]:
-            st.empty()
-        
-        st.markdown("---")
-        st.markdown("### 💰 Pricing Results")
         
         if ignored_rows:
             st.caption(f"ℹ️ {len(ignored_rows)} routes excluded.")
@@ -4296,50 +4279,75 @@ with tab2:
             # Display results
             res_df = st.session_state.bulk_results
             
-            st.success(f"Generated pricing for **{len(res_df)}** route-vehicle combinations")
+            st.success(f"✅ Generated pricing for **{len(res_df)}** route-vehicle combinations")
             
             st.dataframe(res_df, use_container_width=True, hide_index=True)
             
             # Save section
             st.markdown("---")
-            st.subheader("💾 Save Results")
             
-            rfq_sheet_url = st.secrets.get('RFQ_url', '')
+            # Centered Export Options
+            col_d1, col_export, col_d2 = st.columns([1, 4, 1])
+            with col_export:
+                st.markdown("<h4 style='text-align: center;'>💾 Export Results</h4>", unsafe_allow_html=True)
+                
+                rfq_sheet_url = st.secrets.get('RFQ_url', '')
+                
+                c_down, c_up = st.columns(2)
+                
+                with c_down:
+                    st.download_button(
+                        "📥 Download CSV",
+                        res_df.to_csv(index=False),
+                        "pricing_results.csv",
+                        "text/csv",
+                        type="primary",
+                        use_container_width=True
+                    )
+                
+                with c_up:
+                    if rfq_sheet_url:
+                        default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                        # Using a unique key for the popover or expander to keep UI clean
+                        with st.expander("☁️ Upload to Google Sheet"):
+                             sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
+                             
+                             if st.button("Start Upload", use_container_width=True):
+                                progress = st.progress(0)
+                                status = st.empty()
+                                
+                                def update_progress(done, total, batch):
+                                    progress.progress(done / total)
+                                    status.text(f"Uploading {done}/{total}...")
+                                
+                                ok, msg = upload_to_rfq_sheet(res_df, sheet_name, progress_callback=update_progress)
+                                progress.progress(1.0)
+                                status.empty()
+                                
+                                if ok:
+                                    st.success(msg)
+                                    st.link_button("🔗 Open Sheet", rfq_sheet_url)
+                                else:
+                                    st.error(msg)
             
-            col1, col2 = st.columns(2)
+            st.markdown("---")
             
-            with col1:
-                st.download_button(
-                    "📥 Download CSV",
-                    res_df.to_csv(index=False),
-                    "pricing_results.csv",
-                    "text/csv",
-                    type="primary",
-                    use_container_width=True
-                )
+            # Bottom Nav: Symmetrical
+            b1, b2, b3 = st.columns([1, 1, 1])
             
-            with col2:
-                if rfq_sheet_url:
-                    default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                    sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
-                    
-                    if st.button("☁️ Upload to Google Sheet", use_container_width=True):
-                        progress = st.progress(0)
-                        status = st.empty()
-                        
-                        def update_progress(done, total, batch):
-                            progress.progress(done / total)
-                            status.text(f"Uploading {done}/{total}...")
-                        
-                        ok, msg = upload_to_rfq_sheet(res_df, sheet_name, progress_callback=update_progress)
-                        progress.progress(1.0)
-                        status.empty()
-                        
-                        if ok:
-                            st.success(msg)
-                            st.link_button("🔗 Open Sheet", rfq_sheet_url)
-                        else:
-                            st.error(msg)
+            with b1:
+                if st.button("⬅️ Back", key="step3_back_bottom", use_container_width=True):
+                    st.session_state.bulk_results_stale = True
+                    st.session_state.bulk_wizard_step = 2
+                    st.rerun()
+            
+            with b2:
+                 st.empty() # Spacer
+                 
+            with b3:
+                 if st.button("🔄 Start New", key="step3_new_bottom", use_container_width=True):
+                    reset_wizard()
+                    st.rerun()
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
 # --- TAB 3: MAP EXPLORER (KEY ROTATION FIX) ---

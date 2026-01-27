@@ -3494,10 +3494,23 @@ with tab2:
             except Exception as e:
                 st.error(f"Error reading CSV: {e}")
     
+
     # ============================================
     # STEP 1: City Resolution
     # ============================================
     elif current_step == 1:
+        st.markdown("<h3 style='text-align: center;'>Step 2: Resolve Unmatched Cities</h3>", unsafe_allow_html=True)
+        
+        # Show last distance flush result if any
+        if 'last_distance_flush' in st.session_state:
+            st.caption(st.session_state['last_distance_flush'])
+        
+        # Show any flush errors
+        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
+            for err in st.session_state.flush_errors:
+                st.warning(err)
+            st.session_state.flush_errors = []  # Clear after showing
+        
         wizard_data = st.session_state.bulk_wizard_data
         unmatched = wizard_data.get('unmatched_cities', {})
         fuzzy_results = wizard_data.get('fuzzy_results', {})
@@ -3510,53 +3523,45 @@ with tab2:
             st.session_state.bulk_wizard_step = 2
             st.rerun()
         
+        # --- CENTERED STATS & REFRESH BUTTON ---
+        _, c_stat, _ = st.columns([1, 2, 1])
+        with c_stat:
+            # Display main count centered
+            st.markdown(
+                f"""
+                <div style="text-align: center; border: 1px solid #ddd; padding: 10px; border-radius: 10px; background-color: #f9f9f9; margin-bottom: 10px;">
+                    <h2 style="margin: 0; color: #ff4b4b;">{len(unmatched)}</h2>
+                    <p style="margin: 0; color: gray;">Unmatched Cities Found</p>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            # Centered Refresh Button
+            if st.button("🔄 Check Google Maps Again", use_container_width=True, help="Click this if you are waiting for background geocoding results"):
+                cities_to_check = [c for c in unmatched.keys()]
+                if cities_to_check:
+                    with st.spinner("Checking Google Sheets for new results..."):
+                        new_results = read_geocode_results(cities_to_check)
+                        st.session_state.bulk_wizard_data['google_suggestions'] = new_results
+                        google_matched = [c for c in cities_to_check if new_results.get(c, {}).get('success')]
+                        
+                        if google_matched:
+                            st.toast(f"Updated! Found {len(google_matched)} matches via Google.", icon="🌍")
+                        else:
+                            st.toast("No new matches found yet.", icon="⏳")
+                        
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+
         # Initialize resolution state if not exists
         if 'city_resolutions' not in st.session_state:
             st.session_state.city_resolutions = {}
         
-        # Count resolved
-        resolutions = st.session_state.city_resolutions
-        total_unmatched = len(unmatched)
-        resolved_count = sum(1 for city in unmatched if city in resolutions and resolutions[city].get('type') != 'pending')
-        
-        # TOP NAVIGATION BAR
-        nav_cols = st.columns([1, 3, 1])
-        with nav_cols[0]:
-            if st.button("⬅️ Back", key="step1_back_top", use_container_width=True):
-                st.session_state.bulk_wizard_step = 0
-                st.rerun()
-        with nav_cols[1]:
-            can_proceed = resolved_count >= total_unmatched
-            if st.button(f"▶️ Continue ({resolved_count}/{total_unmatched} resolved)", type="primary", 
-                        key="step1_next_top", use_container_width=True, disabled=not can_proceed):
-                st.session_state.step1_apply = True
-                st.rerun()
-        with nav_cols[2]:
-            st.empty()
-        
-        st.markdown("---")
-        
-        # Header with match stats
-        st.markdown("### 🏙️ Resolve Unmatched Cities")
-        
-        if match_counts:
-            cols = st.columns(4)
-            with cols[0]:
-                st.metric("Total", total_unmatched)
-            with cols[1]:
-                st.metric("🌍 Google", match_counts.get('google', 0))
-            with cols[2]:
-                st.metric("🔤 Fuzzy", match_counts.get('fuzzy', 0))
-            with cols[3]:
-                st.metric("❌ None", match_counts.get('none', 0))
-        
-        # Show any flush errors
-        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
-            for err in st.session_state.flush_errors:
-                st.warning(err)
-            st.session_state.flush_errors = []
-        
-        st.caption("Cities are ordered: Google matches first → Fuzzy matches → No matches. Expand to resolve.")
+        # Build resolution table
+        st.markdown("#### Action Required")
+        st.caption("Cities are ordered: Google matches first, then fuzzy matches, then no matches.")
         
         for idx, (city_name, info) in enumerate(unmatched.items()):
             # Determine match type for this city
@@ -3566,370 +3571,205 @@ with tab2:
             if has_google:
                 match_icon = "🌍"
                 match_label = "Google Match"
+                expanded_default = False 
             elif has_fuzzy:
                 match_icon = "🔤"
                 match_label = "Fuzzy Match"
+                expanded_default = False 
             else:
                 match_icon = "❌"
                 match_label = "No Match"
+                expanded_default = True 
             
-            with st.expander(f"{match_icon} **{city_name}** ({match_label} • {len(info['rows'])} rows)", expanded=(not has_google and not has_fuzzy)):
+            # Check if already resolved
+            is_resolved = city_name in st.session_state.city_resolutions
+            status_icon = "✅" if is_resolved else match_icon
+            
+            with st.expander(f"{status_icon} **{city_name}** ({match_label})", expanded=expanded_default):
                 fuzzy = fuzzy_results.get(city_name, {})
                 
-                # Resolution action selector
-                current_resolution = st.session_state.city_resolutions.get(city_name, {})
-                current_type = current_resolution.get('type', 'pending')
+                # Layout: 2 Columns
+                c1, c2 = st.columns([1, 1])
                 
-                action_options = ["🔍 Resolve", "⏭️ Ignore (skip routes)"]
-                action_idx = 1 if current_type == 'ignored' else 0
-                
-                action = st.radio(
-                    "Action",
-                    options=action_options,
-                    index=action_idx,
-                    key=f"action_{idx}",
-                    horizontal=True,
-                    label_visibility="collapsed"
-                )
-                
-                if action == "⏭️ Ignore (skip routes)":
-                    st.warning(f"⚠️ {len(info['rows'])} routes with this city will be **excluded** from pricing.")
-                    st.session_state.city_resolutions[city_name] = {
-                        'type': 'ignored',
-                        'rows': info['rows']
-                    }
-                else:
-                    # Clear ignored status if switching back
-                    if current_type == 'ignored':
-                        del st.session_state.city_resolutions[city_name]
+                with c1:
+                    st.caption(f"Appears in **{len(info['rows'])} routes** (Column: {info['col']})")
+                    st.caption(f"Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
                     
-                    col1, col2 = st.columns([1, 1])
-                    
-                    with col1:
-                        st.caption(f"Column: {info['col']} | Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
+                    # 1. Google Match Info
+                    google_res = google_suggestions.get(city_name, {})
+                    if google_res.get('success'):
+                        st.success(f"🌍 **Google Found:** {google_res.get('matched_name')}")
+                        st.caption(f"📍 {google_res.get('latitude'):.4f}, {google_res.get('longitude'):.4f}")
                         
-                        # Show fuzzy match suggestion
-                        if fuzzy.get('match_found'):
-                            confidence = fuzzy.get('confidence', 0)
-                            suggested = fuzzy.get('suggested_canonical', '')
-                            suggested_en = to_english_city(suggested)
+                        if st.button("Accept Google Match", key=f"btn_goog_{idx}", use_container_width=True):
+                            prov, reg = get_province_from_coordinates(google_res['latitude'], google_res['longitude'])
+                            if not prov: reg = "Central"
                             
-                            if confidence >= 90:
-                                st.success(f"✅ High confidence match: **{suggested_en}** ({confidence}%)")
-                            else:
-                                st.warning(f"⚠️ Possible match: **{suggested_en}** ({confidence}%)")
-                            
-                            # Show other matches if available
-                            all_matches = fuzzy.get('all_matches', [])
-                            if len(all_matches) > 1:
-                                with st.expander("Other possible matches"):
-                                    for m in all_matches[1:4]:
-                                        st.caption(f"• {to_english_city(m['canonical'])} ({m['score']}%)")
-                        else:
-                            # No fuzzy match - check for Google suggestion
-                            google_suggestions = wizard_data.get('google_suggestions', {})
-                            google_result = google_suggestions.get(city_name, {})
-                            
-                            if google_result.get('success'):
-                                st.info(f"🌍 **Google Maps suggestion:** {google_result.get('matched_name', 'Unknown')}")
-                                st.caption(f"📍 Coordinates: {google_result.get('latitude'):.5f}, {google_result.get('longitude'):.5f}")
-                            else:
-                                st.error("❌ No match found - please provide coordinates for a new city")
+                            st.session_state.city_resolutions[city_name] = {
+                                'type': 'google_match',
+                                'canonical': google_res['matched_name'],
+                                'latitude': google_res['latitude'],
+                                'longitude': google_res['longitude'],
+                                'province': prov,
+                                'region': reg,
+                                'original_input': city_name
+                            }
+                            st.rerun()
+
+                    # 2. Fuzzy Match Info
+                    elif fuzzy.get('match_found'):
+                        st.info(f"🔤 **Similar to:** {fuzzy.get('suggested_canonical')} ({fuzzy.get('confidence')}%)")
+                        
+                        all_matches = fuzzy.get('all_matches', [])
+                        if len(all_matches) > 1:
+                            with st.expander("Other possibilities"):
+                                for m in all_matches[1:4]:
+                                    st.caption(f"• {to_english_city(m['canonical'])} ({m['score']}%)")
+
+                        if st.button(f"Accept '{to_english_city(fuzzy.get('suggested_canonical'))}'", key=f"btn_fuz_{idx}", use_container_width=True):
+                            st.session_state.city_resolutions[city_name] = {
+                                'type': 'fuzzy_match',
+                                'canonical': fuzzy.get('suggested_canonical'),
+                                'confidence': fuzzy.get('confidence'),
+                                'english': to_english_city(fuzzy.get('suggested_canonical'))
+                            }
+                            st.rerun()
                     
-                    with col2:
-                        # Resolution options
-                        if fuzzy.get('match_found'):
-                            accept = st.checkbox(f"Accept suggestion", 
-                                               value=fuzzy.get('confidence', 0) >= 90,
-                                               key=f"accept_{idx}")
-                            
-                            if accept:
+                    else:
+                        st.warning("No automatic match found.")
+
+                with c2:
+                    # Manual / Ignore Options
+                    action_mode = st.radio("Manual Action:", ["Select Action...", "Add New City", "Ignore (Skip Routes)"], key=f"rad_{idx}")
+                    
+                    if action_mode == "Ignore (Skip Routes)":
+                        st.warning("Routes with this city will be excluded.")
+                        if st.button("Confirm Ignore", key=f"ign_{idx}", use_container_width=True):
+                             st.session_state.city_resolutions[city_name] = {
+                                'type': 'ignored',
+                                'rows': info['rows']
+                            }
+                             st.rerun()
+                             
+                    elif action_mode == "Add New City":
+                        st.markdown("**Enter Coordinates:**")
+                        new_lat = st.number_input("Latitude", key=f"lat_{idx}", format="%.6f")
+                        new_lon = st.number_input("Longitude", key=f"lon_{idx}", format="%.6f")
+                        
+                        if st.button("Save New City", key=f"save_{idx}", use_container_width=True):
+                            if new_lat == 0 or new_lon == 0:
+                                st.error("Enter valid coordinates")
+                            else:
+                                prov, reg = get_province_from_coordinates(new_lat, new_lon)
+                                if not prov: 
+                                    prov, reg = None, "Central"
+                                
                                 st.session_state.city_resolutions[city_name] = {
-                                    'type': 'fuzzy_match',
-                                    'canonical': fuzzy.get('suggested_canonical'),
-                                    'confidence': fuzzy.get('confidence'),
-                                    'english': to_english_city(fuzzy.get('suggested_canonical'))
+                                    'type': 'new_city',
+                                    'canonical': city_name,
+                                    'latitude': new_lat,
+                                    'longitude': new_lon,
+                                    'province': prov,
+                                    'region': reg
                                 }
-                            else:
-                                # Not accepting suggestion - show coordinate input for new city
-                                st.markdown("**Add as new city:**")
-                                lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
-                                lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
-                                
-                                if lat != 0 and lon != 0:
-                                    # Auto-detect province
-                                    province, region = get_province_from_coordinates(lat, lon)
-                                    if province:
-                                        st.success(f"📍 Detected: {province} → {region}")
-                                    else:
-                                        st.warning("Could not detect province from coordinates")
-                                        region = st.selectbox("Select Region", 
-                                                             options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
-                                                             key=f"region_{idx}")
-                                        province = None
-                                    
-                                    st.session_state.city_resolutions[city_name] = {
-                                        'type': 'new_city',
-                                        'canonical': city_name,  # Use original as canonical
-                                        'latitude': lat,
-                                        'longitude': lon,
-                                        'province': province,
-                                        'region': region
-                                    }
-                        else:
-                            # No fuzzy match - check for Google suggestion
-                            google_suggestions = wizard_data.get('google_suggestions', {})
-                            google_result = google_suggestions.get(city_name, {})
-                            
-                            if google_result.get('success'):
-                                # Pre-fill with Google's coordinates
-                                default_lat = google_result.get('latitude', 0.0)
-                                default_lon = google_result.get('longitude', 0.0)
-                                google_name = google_result.get('matched_name', city_name)
-                                
-                                accept_google = st.checkbox(
-                                    f"✅ Accept Google suggestion: **{google_name}**", 
-                                    value=True,
-                                    key=f"accept_google_{idx}"
-                                )
-                                
-                                if accept_google:
-                                    # Auto-detect province from Google coordinates
-                                    province, region = get_province_from_coordinates(default_lat, default_lon)
-                                    if province:
-                                        st.success(f"📍 {province} → {region}")
-                                    else:
-                                        region = st.selectbox("Select Region", 
-                                                             options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
-                                                             key=f"region_{idx}")
-                                        province = None
-                                    
-                                    st.session_state.city_resolutions[city_name] = {
-                                        'type': 'google_match',
-                                        'canonical': google_name,
-                                        'latitude': default_lat,
-                                        'longitude': default_lon,
-                                        'province': province,
-                                        'region': region,
-                                        'original_input': city_name
-                                    }
-                                else:
-                                    # User wants to override - show manual input
-                                    st.markdown("**Override with different coordinates:**")
-                                    lat = st.number_input("Latitude", key=f"lat_{idx}", value=default_lat, format="%.6f")
-                                    lon = st.number_input("Longitude", key=f"lon_{idx}", value=default_lon, format="%.6f")
-                                    
-                                    if lat != 0 and lon != 0:
-                                        province, region = get_province_from_coordinates(lat, lon)
-                                        if province:
-                                            st.success(f"📍 Detected: {province} → {region}")
-                                        else:
-                                            st.warning("Could not detect province from coordinates")
-                                            region = st.selectbox("Select Region", 
-                                                                 options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
-                                                                 key=f"region_{idx}")
-                                            province = None
-                                        
-                                        st.session_state.city_resolutions[city_name] = {
-                                            'type': 'new_city',
-                                            'canonical': city_name,
-                                            'latitude': lat,
-                                            'longitude': lon,
-                                            'province': province,
-                                            'region': region
-                                        }
-                            else:
-                                # No Google match either - must enter manually
-                                st.markdown("**Add as new city:**")
-                                lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
-                                lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
-                                
-                                if lat != 0 and lon != 0:
-                                    province, region = get_province_from_coordinates(lat, lon)
-                                    if province:
-                                        st.success(f"📍 Detected: {province} → {region}")
-                                    else:
-                                        st.warning("Could not detect province from coordinates")
-                                        region = st.selectbox("Select Region", 
-                                                             options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
-                                                             key=f"region_{idx}")
-                                        province = None
-                                    
-                                    st.session_state.city_resolutions[city_name] = {
-                                        'type': 'new_city',
-                                        'canonical': city_name,
-                                        'latitude': lat,
-                                        'longitude': lon,
-                                        'province': province,
-                                        'region': region
-                                    }
+                                st.rerun()
         
-        # Check if all resolved (including ignored)
+        # Check progress
         resolved_count = len(st.session_state.city_resolutions)
+        total_unmatched = len(unmatched)
+        progress_val = resolved_count / total_unmatched if total_unmatched > 0 else 0
+        
+        st.markdown("---")
+        st.progress(progress_val)
+        
         ignored_count = sum(1 for r in st.session_state.city_resolutions.values() if r.get('type') == 'ignored')
         actual_resolved = resolved_count - ignored_count
-        total_unmatched = len(unmatched)
         
-        # Process if top button was clicked
-        should_apply = st.session_state.get('step1_apply', False)
-        if should_apply:
-            st.session_state.step1_apply = False
+        if ignored_count > 0:
+            st.caption(f"Progress: {actual_resolved} Resolved | {ignored_count} Ignored | {total_unmatched} Total")
+        else:
+            st.caption(f"Progress: {resolved_count} / {total_unmatched} Resolved")
+
+        # --- NAVIGATION BUTTONS (FIXED SIZING 1:1:1) ---
+        c_back, c_ignore, c_cont = st.columns([1, 1, 1])
+        
+        with c_back:
+            if st.button("⬅️ Back to Upload", use_container_width=True):
+                st.session_state.bulk_wizard_step = 0
+                st.rerun()
+
+        with c_ignore:
+            # "Ignore All" logic
+            unresolved_remaining = total_unmatched - resolved_count
+            if unresolved_remaining > 0:
+                if st.button(f"🗑️ Ignore {unresolved_remaining} Remaining", use_container_width=True, help="Skip all currently unresolved cities"):
+                    for city, info in unmatched.items():
+                        if city not in st.session_state.city_resolutions:
+                            st.session_state.city_resolutions[city] = {
+                                'type': 'ignored',
+                                'rows': info['rows']
+                            }
+                    st.rerun()
+            else:
+                 st.button("🗑️ Ignore Remaining", use_container_width=True, disabled=True)
+        
+        with c_cont:
             can_proceed = resolved_count >= total_unmatched
+            btn_text = "Apply & Continue ▶️" if can_proceed else "Resolve All to Continue 🚫"
             
-            if can_proceed:
-                    # Apply resolutions
+            if st.button(btn_text, type="primary", use_container_width=True, disabled=not can_proceed):
+                if not can_proceed:
+                    st.error("Please resolve or ignore all unmatched cities before proceeding")
+                else:
                     resolutions = st.session_state.city_resolutions
                     new_entries = []
                     ignored_rows = set()
                     
                     for city_name, resolution in resolutions.items():
                         if resolution['type'] == 'ignored':
-                            # Track rows to skip
                             for row_num in resolution.get('rows', []):
                                 ignored_rows.add(row_num)
-                                
-                                # 👇 FIX START: Get full row data to log Pickup/Dest
-                                # parsed_rows is 0-indexed, row_num is 1-indexed
                                 try:
                                     row_data = wizard_data['parsed_rows'][row_num - 1]
                                     p_val = row_data.get('pickup_raw', '')
                                     d_val = row_data.get('dest_raw', '')
-                                except IndexError:
-                                    p_val = "Unknown"
-                                    d_val = "Unknown"
+                                except: p_val, d_val = 'Unknown', 'Unknown'
                                 
                                 log_exception('route_ignored', {
-                                    'pickup_city': p_val,       # ✅ Explicitly log Pickup
-                                    'destination_city': d_val,  # ✅ Explicitly log Destination
-                                    'original_value': city_name,
-                                    'action': 'Ignored by user',
-                                    'row_num': row_num
+                                    'pickup_city': p_val, 'destination_city': d_val,
+                                    'original_value': city_name, 'action': 'Ignored', 'row_num': row_num
                                 }, immediate=False)
-                                # 👆 FIX END
                                 
                         elif resolution['type'] == 'fuzzy_match':
-                            # Log fuzzy match
-                            log_city_match(
-                                original_input=city_name,
-                                matched_canonical=resolution['canonical'],
-                                match_type='Fuzzy Match Confirmed',
-                                confidence=resolution['confidence'],
-                                user=username,
-                                source='bulk_upload',
-                                immediate=False
-                            )
-                            # Add to temporary normalization
+                            log_city_match(city_name, resolution['canonical'], 'Fuzzy Match', resolution['confidence'], user=username, immediate=False)
+                            new_entries.append({'variant': city_name, 'canonical': resolution['canonical'], 'region': get_city_region(resolution['canonical']), 'province': get_city_province(resolution['canonical'])})
+                            log_to_append_sheet(city_name, resolution['canonical'], get_city_region(resolution['canonical']), province=get_city_province(resolution['canonical']), source='fuzzy', user=username, immediate=False)
+                            
+                        elif resolution['type'] in ['new_city', 'google_match']:
+                            src = 'google' if resolution['type'] == 'google_match' else 'new_city'
+                            log_city_match(city_name, resolution['canonical'], 'New/Google', None, latitude=resolution['latitude'], longitude=resolution['longitude'], province=resolution['province'], region=resolution['region'], user=username, source=src, immediate=False)
+                            
                             new_entries.append({
-                                'variant': city_name,
-                                'canonical': resolution['canonical'],
-                                'region': get_city_region(resolution['canonical']),
-                                'province': get_city_province(resolution['canonical'])
+                                'variant': city_name, 'canonical': resolution['canonical'],
+                                'region': resolution['region'], 'province': resolution['province'],
+                                'latitude': resolution['latitude'], 'longitude': resolution['longitude']
                             })
-                            # Log to Append sheet
-                            log_to_append_sheet(
-                                variant=city_name,
-                                canonical=resolution['canonical'],
-                                region=get_city_region(resolution['canonical']),
-                                province=get_city_province(resolution['canonical']),
-                                source='fuzzy_match',
-                                user=username,
-                                immediate=False
-                            )
-                        elif resolution['type'] == 'new_city':
-                            # New city
-                            log_city_match(
-                                original_input=city_name,
-                                matched_canonical=resolution['canonical'],
-                                match_type='New City',
-                                confidence=None,
-                                latitude=resolution.get('latitude'),
-                                longitude=resolution.get('longitude'),
-                                province=resolution.get('province'),
-                                region=resolution.get('region'),
-                                user=username,
-                                source='bulk_upload',
-                                immediate=False
-                            )
-                            new_entries.append({
-                                'variant': city_name,
-                                'canonical': resolution['canonical'],
-                                'region': resolution.get('region'),
-                                'province': resolution.get('province'),
-                                'latitude': resolution.get('latitude'),
-                                'longitude': resolution.get('longitude')
-                            })
-                            # Log to Append sheet
-                            log_to_append_sheet(
-                                variant=city_name,
-                                canonical=resolution['canonical'],
-                                region=resolution.get('region'),
-                                province=resolution.get('province'),
-                                latitude=resolution.get('latitude'),
-                                longitude=resolution.get('longitude'),
-                                source='new_city',
-                                user=username,
-                                immediate=False
-                            )
-                        elif resolution['type'] == 'google_match':
-                            # Google Maps geocoded match
-                            log_city_match(
-                                original_input=city_name,
-                                matched_canonical=resolution['canonical'],
-                                match_type='Google Maps Match',
-                                confidence=None,
-                                latitude=resolution.get('latitude'),
-                                longitude=resolution.get('longitude'),
-                                province=resolution.get('province'),
-                                region=resolution.get('region'),
-                                user=username,
-                                source='google_geocode',
-                                immediate=False
-                            )
-                            new_entries.append({
-                                'variant': city_name,
-                                'canonical': resolution['canonical'],
-                                'region': resolution.get('region'),
-                                'province': resolution.get('province'),
-                                'latitude': resolution.get('latitude'),
-                                'longitude': resolution.get('longitude')
-                            })
-                            # Also add the Google-matched name as a variant if different
                             if resolution['canonical'] != city_name:
-                                new_entries.append({
-                                    'variant': resolution['canonical'],
-                                    'canonical': resolution['canonical'],
-                                    'region': resolution.get('region'),
-                                    'province': resolution.get('province'),
-                                    'latitude': resolution.get('latitude'),
-                                    'longitude': resolution.get('longitude')
+                                 new_entries.append({
+                                    'variant': resolution['canonical'], 'canonical': resolution['canonical'],
+                                    'region': resolution['region'], 'province': resolution['province'],
+                                    'latitude': resolution['latitude'], 'longitude': resolution['longitude']
                                 })
-                            # Log to Append sheet
-                            log_to_append_sheet(
-                                variant=city_name,
-                                canonical=resolution['canonical'],
-                                region=resolution.get('region'),
-                                province=resolution.get('province'),
-                                latitude=resolution.get('latitude'),
-                                longitude=resolution.get('longitude'),
-                                source='google_geocode',
-                                user=username,
-                                immediate=False
-                            )
-                    
-                    # Update in-memory normalization
+                            log_to_append_sheet(city_name, resolution['canonical'], resolution['region'], province=resolution['province'], latitude=resolution['latitude'], longitude=resolution['longitude'], source=src, user=username, immediate=False)
+
                     update_city_normalization_pickle(new_entries)
-                    
-                    # ✅ FIX: Flush logs immediately
                     flush_matched_cities_to_sheet()
                     flush_append_sheet()
-                    flush_error_log_to_sheet()  # Log the ignored routes we just added
+                    flush_error_log_to_sheet()
                     
-                    # Update parsed rows with new canonical names and mark ignored rows
                     parsed_rows = wizard_data['parsed_rows']
                     for row in parsed_rows:
-                        # Check if this row should be ignored
                         row['ignored'] = row['row_num'] in ignored_rows
-                        
                         if not row['ignored']:
                             if not row['pickup_ok']:
                                 res = resolutions.get(row['pickup_raw'])
@@ -3943,10 +3783,8 @@ with tab2:
                                     row['dest_ok'] = True
                     
                     st.session_state.bulk_wizard_data['parsed_rows'] = parsed_rows
-                    st.session_state.bulk_wizard_data['applied_resolutions'] = resolutions
                     st.session_state.bulk_wizard_data['ignored_rows'] = ignored_rows
                     
-                    # Move to distance review
                     st.session_state.bulk_wizard_step = 2
                     st.rerun()
     
@@ -4206,48 +4044,70 @@ with tab2:
             for pair_key, info in missing_distances.items()
         )
         
-        # Process if top button was clicked and allowed
-        proceed_disabled = bool(missing_distances) and not all_resolved
-        if step2_continue and not proceed_disabled:
-            # Log distance edits as user suggestions
-            for pair_key, new_dist in st.session_state.distance_edits.items():
-                pickup_ar, dest_ar = pair_key
-                info = distance_results.get(pair_key, {})
-                old_dist = info.get('distance', 0)
+        # =========================================================
+        # FIX START: Symmetrical Button Layout & Sizing
+        # =========================================================
+        # UPDATED: Symmetrical [1, 1, 1] layout for buttons so they are even
+        c_back, c_cont, c_reset = st.columns([1, 1, 1])
+        
+        with c_back:
+            # FIX: Added use_container_width=True
+            if st.button("⬅️ Back to Cities", use_container_width=True):
+                st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
+                st.rerun()
+        
+        with c_cont:
+            proceed_disabled = bool(missing_distances) and not all_resolved
+            btn_text = "Generate Pricing ▶️" if not proceed_disabled else "Resolve Missing 🚫"
+            
+            # FIX: Added use_container_width=True
+            if st.button(btn_text, type="primary", use_container_width=True, disabled=proceed_disabled):
+                # =========================================================
+                # LOGIC PRESERVED: Processing Distance Edits
+                # =========================================================
+                # Log distance edits as user suggestions
+                for pair_key, new_dist in st.session_state.distance_edits.items():
+                    pickup_ar, dest_ar = pair_key
+                    info = distance_results.get(pair_key, {})
+                    old_dist = info.get('distance', 0)
+                    
+                    if new_dist != old_dist:
+                        suggest_distance_change(
+                            pickup_ar, dest_ar, 
+                            info.get('pickup_en', to_english_city(pickup_ar)), 
+                            info.get('dest_en', to_english_city(dest_ar)),
+                            old_dist, new_dist, username
+                        )
                 
-                if new_dist != old_dist:
-                    # Log as user suggestion to MatchedDistances
-                    suggest_distance_change(
-                        pickup_ar=pickup_ar,
-                        dest_ar=dest_ar,
-                        pickup_en=info.get('pickup_en', to_english_city(pickup_ar)),
-                        dest_en=info.get('dest_en', to_english_city(dest_ar)),
-                        current_distance=old_dist,
-                        suggested_distance=new_dist,
-                        user_name=username
-                    )
-            
-            # Store final distances WITH their sources
-            final_distances = {}
-            distance_sources = {}
-            for pair_key, info in distance_results.items():
-                if pair_key in st.session_state.distance_edits:
-                    # User edited in Step 2
-                    final_distances[pair_key] = st.session_state.distance_edits[pair_key]
-                    distance_sources[pair_key] = 'User Edited'
-                elif info['user_override']:
-                    # User provided in CSV
-                    final_distances[pair_key] = info['user_override']
-                    distance_sources[pair_key] = 'CSV Provided'
-                else:
-                    # From matrix/historical - store distance but mark source so we know not to override
-                    final_distances[pair_key] = info['distance']
-                    distance_sources[pair_key] = info['source']  # 'Matrix', 'Historical', etc.
-            
-            st.session_state.bulk_wizard_data['final_distances'] = final_distances
-            st.session_state.bulk_wizard_data['distance_sources'] = distance_sources
-            st.session_state.bulk_wizard_step = 3
-            st.rerun()
+                # Store final distances
+                final_distances = {}
+                distance_sources = {}
+                for pair_key, info in distance_results.items():
+                    if pair_key in st.session_state.distance_edits:
+                        final_distances[pair_key] = st.session_state.distance_edits[pair_key]
+                        distance_sources[pair_key] = 'User Edited'
+                    elif info['user_override']:
+                        final_distances[pair_key] = info['user_override']
+                        distance_sources[pair_key] = 'CSV Provided'
+                    else:
+                        final_distances[pair_key] = info['distance']
+                        distance_sources[pair_key] = info['source']
+                
+                st.session_state.bulk_wizard_data['final_distances'] = final_distances
+                st.session_state.bulk_wizard_data['distance_sources'] = distance_sources
+                st.session_state.bulk_wizard_step = 3
+                st.rerun()
+        
+        with c_reset:
+            # FIX: Added use_container_width=True
+            if st.button("🔄 Reset All", use_container_width=True):
+                reset_wizard()
+                st.rerun()
+        
+        # =========================================================
+        # FIX END
+        # =========================================================
+        
         elif step2_continue and proceed_disabled:
             st.error("⚠️ Please resolve all missing distances before proceeding")
     

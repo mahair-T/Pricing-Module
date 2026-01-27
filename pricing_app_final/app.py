@@ -3197,22 +3197,32 @@ with tab2:
                                             row['pickup_ar'], row['dest_ar'], 
                                             immediate_log=False
                                         )
+                            # ---------------------------------------------------------
+                            # ✅ FIX: FLUSH BOTH QUEUES TO SHEETS
+                            # ---------------------------------------------------------
                             
-                            # Flush missing distances to sheet immediately
+                            # 1. Flush Missing Distances (MatchedDistances Sheet)
                             dist_flushed_ok, dist_flushed_count = flush_matched_distances_to_sheet()
                             
-                            # Show flush result (will only be visible briefly before rerun)
+                            # 2. Flush Error Log (ErrorLog Sheet) <--- ADD THIS BLOCK
+                            err_flushed_ok, err_flushed_count = flush_error_log_to_sheet()
+                            
+                            # Update feedback message to show both results
+                            msgs = []
                             if dist_flushed_count > 0:
-                                st.session_state['last_distance_flush'] = f"✅ Logged {dist_flushed_count} missing distances for Google Maps lookup"
-                            elif not dist_flushed_ok:
-                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush distances to sheet"
+                                msgs.append(f"✅ Logged {dist_flushed_count} missing distances for lookup")
+                            
+                            if err_flushed_count > 0:
+                                msgs.append(f"⚠️ Logged {err_flushed_count} exceptions to ErrorLog")
+                                
+                            if msgs:
+                                st.session_state['last_distance_flush'] = " | ".join(msgs)
+                            elif not dist_flushed_ok or not err_flushed_ok:
+                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush logs to sheets"
                             else:
-                                # Check how many were in pending
-                                pending_before = len(matched_pairs_checked) - len([r for r in parsed_rows if r.get('dist_override')])
-                                if pending_before > 0:
-                                    st.session_state['last_distance_flush'] = f"ℹ️ No new distances to log ({pending_before} routes already had distances or exist in sheet)"
-                                else:
-                                    st.session_state['last_distance_flush'] = "ℹ️ All routes have distances or were skipped"
+                                st.session_state['last_distance_flush'] = "ℹ️ No new issues to log"
+                                
+                            # ---------------------------------------------------------
                             
                             # Store in session state
                             st.session_state.bulk_wizard_data = {
@@ -4222,23 +4232,24 @@ with tab2:
                     st.error(message)
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
+# --- TAB 3: MAP EXPLORER (KEY ROTATION FIX) ---
 with tab3:
     st.subheader("🗺️ Live Distance Calculator (OSM)")
 
-    # 1. HELPER: The "Nuclear Option" to force-update widgets
-    def set_pin(prefix, lat, lon, name=None):
+    # 1. HELPER: Key Rotation to force-refresh inputs
+    def force_update_pin(prefix, lat, lon, name=None):
         """
-        Updates the session variable AND deletes the widget key.
-        This forces the input box to re-load with the new value.
+        Updates variable AND increments a counter.
+        The counter change forces the Input Widgets to be destroyed and re-created,
+        guaranteeing they display the new value.
         """
         # Update the Source of Truth
         st.session_state[f'{prefix}_lat'] = lat
         st.session_state[f'{prefix}_lon'] = lon
         if name: st.session_state[f'{prefix}_name'] = name
         
-        # DELETE the widget state so it doesn't "remember" the old value
-        if f'widget_{prefix}_lat' in st.session_state: del st.session_state[f'widget_{prefix}_lat']
-        if f'widget_{prefix}_lon' in st.session_state: del st.session_state[f'widget_{prefix}_lon']
+        # Increment the "Refresh ID" to force new widgets
+        st.session_state['refresh_id'] += 1
         
         # Reset Route & Map View
         st.session_state.route_geom = None
@@ -4246,6 +4257,8 @@ with tab3:
         st.session_state.map_zoom = 12
 
     # 2. Initialize Defaults
+    if 'refresh_id' not in st.session_state: st.session_state.refresh_id = 0
+    
     if 'p1_lat' not in st.session_state:
         st.session_state.p1_lat = 24.7136
         st.session_state.p1_lon = 46.6753
@@ -4268,23 +4281,29 @@ with tab3:
         
         # --- ORIGIN CONTROLS ---
         st.markdown("#### 🟢 Origin")
-        # SEARCH LOGIC
-        search_1 = st.text_input("Search Origin", key="s1", placeholder="City or District...")
-        if st.button("Find Origin", key="btn_find_p1"):
-            with st.spinner("Searching..."):
-                res = search_osm(search_1)
-                if res:
-                    set_pin('p1', res[0], res[1], res[2]) # <--- Forces update
-                    st.rerun()
-                else: st.error("Not found")
         
-        # MANUAL INPUTS
+        # Search Bar
+        c_search1, c_btn1 = st.columns([3, 1])
+        with c_search1:
+            search_1 = st.text_input("Search Origin", label_visibility="collapsed", placeholder="City or District...", key="s1")
+        with c_btn1:
+            if st.button("Find", key="btn_find_p1"):
+                with st.spinner("..."):
+                    res = search_osm(search_1)
+                    if res:
+                        force_update_pin('p1', res[0], res[1], res[2])
+                        st.rerun()
+                    else: st.error("❌")
+        
+        # MANUAL INPUTS (With Dynamic Keys)
+        # We append 'refresh_id' to the key. This forces a fresh widget on every update.
         c1, c2 = st.columns(2)
-        # Note: We use 'value' from session state, but 'key' is unique
-        new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key="widget_p1_lat")
-        new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key="widget_p1_lon")
+        rid = st.session_state.refresh_id
         
-        # Detect Manual Typing
+        new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key=f"p1_lat_{rid}")
+        new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key=f"p1_lon_{rid}")
+        
+        # Detect Manual Typing (Update state without incrementing counter)
         if new_p1_lat != st.session_state.p1_lat or new_p1_lon != st.session_state.p1_lon:
             st.session_state.p1_lat = new_p1_lat
             st.session_state.p1_lon = new_p1_lon
@@ -4295,20 +4314,24 @@ with tab3:
 
         # --- DESTINATION CONTROLS ---
         st.markdown("#### 🔴 Destination")
-        # SEARCH LOGIC
-        search_2 = st.text_input("Search Destination", key="s2", placeholder="City or District...")
-        if st.button("Find Destination", key="btn_find_p2"):
-            with st.spinner("Searching..."):
-                res = search_osm(search_2)
-                if res:
-                    set_pin('p2', res[0], res[1], res[2]) # <--- Forces update
-                    st.rerun()
-                else: st.error("Not found")
+        
+        # Search Bar
+        c_search2, c_btn2 = st.columns([3, 1])
+        with c_search2:
+            search_2 = st.text_input("Search Destination", label_visibility="collapsed", placeholder="City or District...", key="s2")
+        with c_btn2:
+            if st.button("Find", key="btn_find_p2"):
+                with st.spinner("..."):
+                    res = search_osm(search_2)
+                    if res:
+                        force_update_pin('p2', res[0], res[1], res[2])
+                        st.rerun()
+                    else: st.error("❌")
 
-        # MANUAL INPUTS
+        # MANUAL INPUTS (With Dynamic Keys)
         c3, c4 = st.columns(2)
-        new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key="widget_p2_lat")
-        new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key="widget_p2_lon")
+        new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key=f"p2_lat_{rid}")
+        new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key=f"p2_lon_{rid}")
 
         # Detect Manual Typing
         if new_p2_lat != st.session_state.p2_lat or new_p2_lon != st.session_state.p2_lon:
@@ -4350,7 +4373,7 @@ with tab3:
 
         st_data = st_folium(m, width="100%", height=600, returned_objects=["last_clicked"])
         
-        # --- MAP CLICK HANDLER ---
+        # --- ROBUST CLICK HANDLER ---
         if st_data and st_data.get('last_clicked'):
             lat = st_data['last_clicked']['lat']
             lon = st_data['last_clicked']['lng']
@@ -4358,14 +4381,13 @@ with tab3:
             changed = False
             
             if "Set Origin" in click_mode:
-                # Check for tiny difference to avoid infinite reload loop
                 if abs(lat - st.session_state.p1_lat) > 0.00001:
-                    set_pin('p1', lat, lon) # <--- Forces update
+                    force_update_pin('p1', lat, lon)
                     changed = True
 
             elif "Set Destination" in click_mode:
                 if abs(lat - st.session_state.p2_lat) > 0.00001:
-                    set_pin('p2', lat, lon) # <--- Forces update
+                    force_update_pin('p2', lat, lon)
                     changed = True
             
             if changed:

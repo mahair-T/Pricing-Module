@@ -3489,8 +3489,8 @@ with tab2:
                                     
                                     success, count_written, start_row = write_cities_for_geocoding(cities_needing_geocode)
                                     
-                                    if success and count_written > 0:
-                                        # Wait for Google API to process
+                                    if success:
+                                        # Wait for Google API to process (always wait to allow formulas to calculate)
                                         import time
                                         for remaining in range(10, 0, -1):
                                             status_placeholder.info(f"⏳ Waiting for Google Maps API... {remaining}s")
@@ -3502,11 +3502,13 @@ with tab2:
                                         
                                         # Count successful geocodes
                                         successful = sum(1 for r in google_results.values() if r.get('success'))
-                                        status_placeholder.success(f"✅ Google found {successful}/{len(cities_needing_geocode)} city suggestions")
+                                        if count_written > 0:
+                                            status_placeholder.success(f"✅ Google found {successful}/{len(cities_needing_geocode)} cities ({count_written} newly sent)")
+                                        else:
+                                            status_placeholder.success(f"✅ Google found {successful}/{len(cities_needing_geocode)} city suggestions")
                                     else:
                                         st.session_state.bulk_wizard_data['google_suggestions'] = {}
-                                        if not success:
-                                            status_placeholder.warning("⚠️ Could not connect to Google Sheets for geocoding")
+                                        status_placeholder.warning("⚠️ Could not connect to Google Sheets for geocoding")
                                 else:
                                     st.session_state.bulk_wizard_data['google_suggestions'] = {}
                                 

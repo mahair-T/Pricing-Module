@@ -3197,32 +3197,29 @@ with tab2:
                                             row['pickup_ar'], row['dest_ar'], 
                                             immediate_log=False
                                         )
-                            # ---------------------------------------------------------
-                            # ✅ FIX: FLUSH BOTH QUEUES TO SHEETS
-                            # ---------------------------------------------------------
+                            # --- ⬇️ FIX STARTS HERE ⬇️ ---
                             
                             # 1. Flush Missing Distances (MatchedDistances Sheet)
                             dist_flushed_ok, dist_flushed_count = flush_matched_distances_to_sheet()
                             
-                            # 2. Flush Error Log (ErrorLog Sheet) <--- ADD THIS BLOCK
+                            # 2. Flush Error Log (ErrorLog Sheet) - THIS WAS MISSING
                             err_flushed_ok, err_flushed_count = flush_error_log_to_sheet()
                             
-                            # Update feedback message to show both results
+                            # Feedback Logic
                             msgs = []
                             if dist_flushed_count > 0:
-                                msgs.append(f"✅ Logged {dist_flushed_count} missing distances for lookup")
-                            
+                                msgs.append(f"✅ Logged {dist_flushed_count} missing distances")
                             if err_flushed_count > 0:
-                                msgs.append(f"⚠️ Logged {err_flushed_count} exceptions to ErrorLog")
+                                msgs.append(f"⚠️ Logged {err_flushed_count} errors to log")
                                 
                             if msgs:
                                 st.session_state['last_distance_flush'] = " | ".join(msgs)
-                            elif not dist_flushed_ok or not err_flushed_ok:
-                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush logs to sheets"
+                            elif not dist_flushed_ok:
+                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush distances"
                             else:
-                                st.session_state['last_distance_flush'] = "ℹ️ No new issues to log"
-                                
-                            # ---------------------------------------------------------
+                                st.session_state['last_distance_flush'] = "ℹ️ No new issues detected"
+                            
+                            # --- ⬆️ FIX ENDS HERE ⬆️ ---
                             
                             # Store in session state
                             st.session_state.bulk_wizard_data = {

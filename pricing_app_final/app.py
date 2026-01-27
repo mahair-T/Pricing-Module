@@ -4222,7 +4222,7 @@ with tab2:
                     st.error(message)
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
-# --- TAB 3: MAP EXPLORER (FULLY INTERACTIVE) ---
+# --- TAB 3: MAP EXPLORER (SAFE STATE UPDATE) ---
 with tab3:
     st.subheader("🗺️ Live Distance Calculator (OSM)")
     
@@ -4253,12 +4253,14 @@ with tab3:
                 res = search_osm(search_1)
                 if res:
                     lat, lon, name = res
-                    # Sync ALL state variables
+                    # Update Backing Vars
                     st.session_state.p1_lat = lat
                     st.session_state.p1_lon = lon
                     st.session_state.p1_name = name
-                    st.session_state.num_p1_lat = lat
-                    st.session_state.num_p1_lon = lon
+                    
+                    # Reset widget state so it picks up new value on rerun
+                    if 'num_p1_lat' in st.session_state: del st.session_state['num_p1_lat']
+                    if 'num_p1_lon' in st.session_state: del st.session_state['num_p1_lon']
                     
                     st.session_state.map_center = [lat, lon]
                     st.session_state.map_zoom = 12
@@ -4270,6 +4272,7 @@ with tab3:
         new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key="num_p1_lat")
         new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key="num_p1_lon")
         
+        # Manual Edit Detection
         if new_p1_lat != st.session_state.p1_lat or new_p1_lon != st.session_state.p1_lon:
             st.session_state.p1_lat = new_p1_lat
             st.session_state.p1_lon = new_p1_lon
@@ -4290,8 +4293,10 @@ with tab3:
                     st.session_state.p2_lat = lat
                     st.session_state.p2_lon = lon
                     st.session_state.p2_name = name
-                    st.session_state.num_p2_lat = lat
-                    st.session_state.num_p2_lon = lon
+                    
+                    # Reset widget state
+                    if 'num_p2_lat' in st.session_state: del st.session_state['num_p2_lat']
+                    if 'num_p2_lon' in st.session_state: del st.session_state['num_p2_lon']
                     
                     st.session_state.map_center = [lat, lon]
                     st.session_state.map_zoom = 12
@@ -4303,6 +4308,7 @@ with tab3:
         new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key="num_p2_lat")
         new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key="num_p2_lon")
 
+        # Manual Edit Detection
         if new_p2_lat != st.session_state.p2_lat or new_p2_lon != st.session_state.p2_lon:
             st.session_state.p2_lat = new_p2_lat
             st.session_state.p2_lon = new_p2_lon
@@ -4342,29 +4348,25 @@ with tab3:
 
         st_data = st_folium(m, width="100%", height=600, returned_objects=["last_clicked"])
         
-        # --- CLICK HANDLER (UPDATED) ---
+        # --- CLICK HANDLER (SAFE VERSION) ---
         if st_data and st_data['last_clicked']:
             lat, lon = st_data['last_clicked']['lat'], st_data['last_clicked']['lng']
             
             if "Set Origin" in click_mode:
-                # Update Main Vars
                 st.session_state.p1_lat = lat
                 st.session_state.p1_lon = lon
-                # Update Widget Keys (CRITICAL FIX)
-                st.session_state.num_p1_lat = lat
-                st.session_state.num_p1_lon = lon
-                
+                # Delete widget state to force refresh
+                if 'num_p1_lat' in st.session_state: del st.session_state['num_p1_lat']
+                if 'num_p1_lon' in st.session_state: del st.session_state['num_p1_lon']
                 st.session_state.route_geom = None
                 st.rerun()
                 
             elif "Set Destination" in click_mode:
-                # Update Main Vars
                 st.session_state.p2_lat = lat
                 st.session_state.p2_lon = lon
-                # Update Widget Keys (CRITICAL FIX)
-                st.session_state.num_p2_lat = lat
-                st.session_state.num_p2_lon = lon
-                
+                # Delete widget state to force refresh
+                if 'num_p2_lat' in st.session_state: del st.session_state['num_p2_lat']
+                if 'num_p2_lon' in st.session_state: del st.session_state['num_p2_lon']
                 st.session_state.route_geom = None
                 st.rerun()
                 

@@ -8,7 +8,14 @@ import io
 import re
 import json
 from datetime import datetime
-import itertools 
+import itertools
+
+# Fuzzy matching for city name resolution
+try:
+    from rapidfuzz import fuzz, process
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False 
 
 # ============================================
 # PAGE CONFIG
@@ -267,7 +274,282 @@ def get_matched_distances_sheet():
     except Exception as e:
         return None
 
-def log_missing_distance_for_lookup(pickup_ar, dest_ar, pickup_en, dest_en, immediate=True):
+def get_matched_cities_sheet():
+    """
+    Get or create the MatchedCities sheet for logging city match resolutions.
+    Tracks fuzzy matches and new city additions from bulk uploads.
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        sheet_url = st.secrets.get('error_log_sheet_url')
+        if not sheet_url:
+            return None
+        
+        spreadsheet = client.open_by_url(sheet_url)
+        
+        try:
+            worksheet = spreadsheet.worksheet('MatchedCities')
+        except:
+            # Create sheet with headers
+            worksheet = spreadsheet.add_worksheet(title='MatchedCities', rows=1000, cols=12)
+            headers = ['Timestamp', 'Original_Input', 'Matched_Canonical', 'Match_Type', 
+                       'Confidence', 'Latitude', 'Longitude', 'Province', 'Region',
+                       'Added_To_CSV', 'User', 'Source']
+            worksheet.update('A1:L1', [headers])
+        
+        return worksheet
+    except Exception as e:
+        return None
+
+def get_append_sheet():
+    """
+    Get or create the Append sheet for easy CSV additions.
+    This sheet mirrors the city_normalization CSV structure for manual appending.
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        sheet_url = st.secrets.get('error_log_sheet_url')
+        if not sheet_url:
+            return None
+        
+        spreadsheet = client.open_by_url(sheet_url)
+        
+        try:
+            worksheet = spreadsheet.worksheet('Append')
+        except:
+            # Create sheet with headers matching city_normalization CSV
+            worksheet = spreadsheet.add_worksheet(title='Append', rows=1000, cols=10)
+            headers = ['variant', 'canonical', 'region', 'province', 'latitude', 'longitude', 
+                       'source', 'timestamp', 'user', 'added_to_csv']
+            worksheet.update('A1:J1', [headers])
+        
+        return worksheet
+    except Exception as e:
+        return None
+
+def log_city_match(original_input, matched_canonical, match_type, confidence, 
+                   latitude=None, longitude=None, province=None, region=None, 
+                   user='', source='bulk_upload', immediate=True):
+    """
+    Log a city match resolution to the MatchedCities sheet.
+    
+    Args:
+        original_input: The original unmatched city name
+        matched_canonical: The canonical name it was matched/assigned to
+        match_type: 'Fuzzy Match Confirmed' or 'New City'
+        confidence: Match confidence score (0-100 for fuzzy, N/A for new)
+        latitude, longitude: Coordinates (for new cities)
+        province: Province name
+        region: Freight region (Eastern, Western, Central, Northern, Southern)
+        user: Username who made the resolution
+        source: Source of the match (bulk_upload, manual, etc.)
+        immediate: If True, write immediately. If False, queue for batch.
+    """
+    # Initialize pending queue if needed
+    if 'matched_cities_pending' not in st.session_state:
+        st.session_state.matched_cities_pending = []
+    
+    row_data = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'original_input': original_input,
+        'matched_canonical': matched_canonical,
+        'match_type': match_type,
+        'confidence': confidence if confidence else 'N/A',
+        'latitude': latitude if latitude else '',
+        'longitude': longitude if longitude else '',
+        'province': province if province else '',
+        'region': region if region else '',
+        'added_to_csv': 'No',
+        'user': user,
+        'source': source
+    }
+    
+    if immediate:
+        try:
+            worksheet = get_matched_cities_sheet()
+            if worksheet:
+                row = [
+                    row_data['timestamp'], row_data['original_input'], row_data['matched_canonical'],
+                    row_data['match_type'], str(row_data['confidence']), str(row_data['latitude']),
+                    str(row_data['longitude']), row_data['province'], row_data['region'],
+                    row_data['added_to_csv'], row_data['user'], row_data['source']
+                ]
+                worksheet.append_row(row)
+                return True
+        except Exception as e:
+            pass
+        return False
+    else:
+        st.session_state.matched_cities_pending.append(row_data)
+        return True
+
+def log_to_append_sheet(variant, canonical, region, province=None, latitude=None, longitude=None,
+                        source='bulk_upload', user='', immediate=True):
+    """
+    Log a new city variant to the Append sheet for CSV addition.
+    
+    Args:
+        variant: The variant name (as entered by user)
+        canonical: The canonical name
+        region: Freight region
+        province: Province name (optional)
+        latitude, longitude: Coordinates (optional)
+        source: Source of the entry
+        user: Username
+        immediate: If True, write immediately
+    """
+    if 'append_sheet_pending' not in st.session_state:
+        st.session_state.append_sheet_pending = []
+    
+    row_data = {
+        'variant': variant,
+        'canonical': canonical,
+        'region': region,
+        'province': province if province else '',
+        'latitude': latitude if latitude else '',
+        'longitude': longitude if longitude else '',
+        'source': source,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'user': user,
+        'added_to_csv': 'No'
+    }
+    
+    if immediate:
+        try:
+            worksheet = get_append_sheet()
+            if worksheet:
+                row = [
+                    row_data['variant'], row_data['canonical'], row_data['region'],
+                    row_data['province'], str(row_data['latitude']), str(row_data['longitude']),
+                    row_data['source'], row_data['timestamp'], row_data['user'], row_data['added_to_csv']
+                ]
+                worksheet.append_row(row)
+                return True
+        except Exception as e:
+            pass
+        return False
+    else:
+        st.session_state.append_sheet_pending.append(row_data)
+        return True
+
+def flush_matched_cities_to_sheet():
+    """Flush pending city matches to Google Sheet."""
+    if 'matched_cities_pending' not in st.session_state or len(st.session_state.matched_cities_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.matched_cities_pending
+    try:
+        worksheet = get_matched_cities_sheet()
+        if worksheet:
+            rows = []
+            for item in pending:
+                rows.append([
+                    item['timestamp'], item['original_input'], item['matched_canonical'],
+                    item['match_type'], str(item['confidence']), str(item['latitude']),
+                    str(item['longitude']), item['province'], item['region'],
+                    item['added_to_csv'], item['user'], item['source']
+                ])
+            if rows:
+                worksheet.append_rows(rows)
+            st.session_state.matched_cities_pending = []
+            return True, len(rows)
+    except Exception as e:
+        pass
+    return False, 0
+
+def flush_append_sheet():
+    """Flush pending append entries to Google Sheet."""
+    if 'append_sheet_pending' not in st.session_state or len(st.session_state.append_sheet_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.append_sheet_pending
+    try:
+        worksheet = get_append_sheet()
+        if worksheet:
+            rows = []
+            for item in pending:
+                rows.append([
+                    item['variant'], item['canonical'], item['region'],
+                    item['province'], str(item['latitude']), str(item['longitude']),
+                    item['source'], item['timestamp'], item['user'], item['added_to_csv']
+                ])
+            if rows:
+                worksheet.append_rows(rows)
+            st.session_state.append_sheet_pending = []
+            return True, len(rows)
+    except Exception as e:
+        pass
+    return False, 0
+
+def update_city_normalization_pickle(new_entries):
+    """
+    Update the in-memory city normalization dictionaries with new entries.
+    This allows new cities to be used immediately without restarting the app.
+    
+    Args:
+        new_entries: List of dicts with keys: variant, canonical, region, province, latitude, longitude
+    
+    Returns: (success, count_added)
+    """
+    global CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_CANONICAL_AGGRESSIVE
+    global CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN, CITY_EN_TO_AR
+    global CITY_TO_PROVINCE, CANONICAL_TO_PROVINCE, FUZZY_VARIANTS_LIST
+    
+    added_count = 0
+    
+    for entry in new_entries:
+        variant = entry.get('variant', '').strip()
+        canonical = entry.get('canonical', '').strip()
+        region = entry.get('region', '')
+        province = entry.get('province', '')
+        
+        if not variant or not canonical:
+            continue
+        
+        # Add to exact match lookup
+        CITY_TO_CANONICAL[variant] = canonical
+        
+        # Add to lowercase lookup
+        variant_lower = normalize_english_text(variant)
+        if variant_lower:
+            CITY_TO_CANONICAL_LOWER[variant_lower] = canonical
+        
+        # Add to aggressive lookup
+        variant_aggressive = normalize_aggressive(variant)
+        if variant_aggressive:
+            CITY_TO_CANONICAL_AGGRESSIVE[variant_aggressive] = canonical
+        
+        # Add region mapping
+        if region:
+            CITY_TO_REGION[variant] = region
+            if canonical not in CANONICAL_TO_REGION:
+                CANONICAL_TO_REGION[canonical] = region
+        
+        # Add province mapping
+        if province:
+            CITY_TO_PROVINCE[variant] = province
+            if canonical not in CANONICAL_TO_PROVINCE:
+                CANONICAL_TO_PROVINCE[canonical] = province
+        
+        # Update English display names if variant is English
+        if re.match(r'^[A-Za-z\s\-\(\)\.\']+$', variant):
+            if canonical not in CITY_AR_TO_EN:
+                CITY_AR_TO_EN[canonical] = variant
+                CITY_EN_TO_AR[variant] = canonical
+        
+        added_count += 1
+    
+    # Rebuild fuzzy variants list
+    if RAPIDFUZZ_AVAILABLE:
+        FUZZY_VARIANTS_LIST = get_all_variants_for_fuzzy_matching()
+    
+    return True, added_count
     """
     Log a missing distance to the MatchedDistances sheet for Google Maps lookup.
     Only logs if this city pair isn't already in the sheet or pending queue.
@@ -1371,7 +1653,123 @@ def normalize_city(city_raw):
     # Return as-is with match=False (will be logged as unmatched)
     return city, False
 
-def get_city_region(city):
+# ============================================
+# FUZZY MATCHING FOR CITY RESOLUTION
+# Uses rapidfuzz for finding best matches to unmatched city names
+# ============================================
+def get_all_variants_for_fuzzy_matching():
+    """
+    Build a list of all variants with their canonical mappings for fuzzy matching.
+    Prioritizes English variants over Arabic for better bulk input matching.
+    
+    Returns: List of (variant, canonical, is_english) tuples sorted by priority
+    """
+    variants = []
+    
+    for variant, canonical in CITY_TO_CANONICAL.items():
+        # Check if variant is primarily English (ASCII letters)
+        is_english = bool(re.match(r'^[A-Za-z\s\-\(\)\.\']+$', str(variant)))
+        variants.append((variant, canonical, is_english))
+    
+    # Sort: English variants first, then Arabic
+    variants.sort(key=lambda x: (not x[2], x[0]))
+    return variants
+
+# Cache the variants list
+FUZZY_VARIANTS_LIST = get_all_variants_for_fuzzy_matching() if RAPIDFUZZ_AVAILABLE else []
+
+def fuzzy_match_city(city_raw, threshold=80):
+    """
+    Find the best fuzzy match for an unmatched city name.
+    
+    Args:
+        city_raw: The unmatched city name to find a match for
+        threshold: Minimum similarity score (0-100) to consider a match
+    
+    Returns:
+        dict with:
+            - match_found: bool
+            - suggested_canonical: The canonical name of the best match (if found)
+            - suggested_variant: The variant that matched (if found)
+            - confidence: Similarity score (0-100)
+            - all_matches: List of top matches above threshold
+    """
+    if not RAPIDFUZZ_AVAILABLE:
+        return {
+            'match_found': False,
+            'error': 'rapidfuzz not installed'
+        }
+    
+    if pd.isna(city_raw) or str(city_raw).strip() == '':
+        return {
+            'match_found': False,
+            'error': 'Empty input'
+        }
+    
+    city = str(city_raw).strip()
+    
+    # Extract just the variants for matching
+    variant_list = [v[0] for v in FUZZY_VARIANTS_LIST]
+    
+    # Use rapidfuzz to find best matches
+    # We use token_sort_ratio for better handling of word order differences
+    matches = process.extract(
+        city, 
+        variant_list, 
+        scorer=fuzz.token_sort_ratio,
+        limit=5
+    )
+    
+    # Filter matches above threshold
+    good_matches = [(match, score, idx) for match, score, idx in matches if score >= threshold]
+    
+    if not good_matches:
+        return {
+            'match_found': False,
+            'input': city,
+            'best_score': matches[0][1] if matches else 0,
+            'best_variant': matches[0][0] if matches else None
+        }
+    
+    # Get the best match
+    best_variant, best_score, best_idx = good_matches[0]
+    best_canonical = FUZZY_VARIANTS_LIST[best_idx][1]
+    
+    # Build list of all good matches with their canonicals
+    all_matches = []
+    for match_variant, score, idx in good_matches:
+        canonical = FUZZY_VARIANTS_LIST[idx][1]
+        all_matches.append({
+            'variant': match_variant,
+            'canonical': canonical,
+            'score': score
+        })
+    
+    return {
+        'match_found': True,
+        'input': city,
+        'suggested_canonical': best_canonical,
+        'suggested_variant': best_variant,
+        'confidence': best_score,
+        'is_high_confidence': best_score >= 90,
+        'all_matches': all_matches
+    }
+
+def batch_fuzzy_match_cities(unmatched_cities, threshold=80):
+    """
+    Find fuzzy matches for a list of unique unmatched city names.
+    
+    Args:
+        unmatched_cities: List of unique city names that didn't match
+        threshold: Minimum similarity score to suggest a match
+    
+    Returns:
+        Dict mapping each input city to its fuzzy match result
+    """
+    results = {}
+    for city in unmatched_cities:
+        results[city] = fuzzy_match_city(city, threshold)
+    return results
     """Get region for a city (checks both variant and canonical mappings). Returns 5-region value."""
     if city in CITY_TO_REGION:
         return CITY_TO_REGION[city]
@@ -2546,424 +2944,737 @@ with tab1:
 with tab2:
     st.subheader("📦 Bulk Route Lookup")
     
-    st.markdown(f"""
-    **Upload a CSV to get pricing for each route.**
+    # ============================================
+    # MULTI-STEP WIZARD FOR BULK LOOKUP
+    # Step 0: Upload & Username
+    # Step 1: City Resolution (Fuzzy Matching)
+    # Step 2: Distance Review
+    # Step 3: Final Pricing
+    # ============================================
     
-    **Columns (by position, names ignored):**
-    1. **Pickup City** (required)
-    2. **Destination City** (required)
-    3. **Distance** (optional - used temporarily, NOT saved to references)
-    4. **Vehicle Type** (optional - default: Flatbed Trailer)
-    5. **Pickup Latitude** (optional - for region detection if city unmatched)
-    6. **Pickup Longitude** (optional - for region detection if city unmatched)
-    7. **Dropoff Latitude** (optional - for region detection if city unmatched)
-    8. **Dropoff Longitude** (optional - for region detection if city unmatched)
+    # Initialize wizard state
+    if 'bulk_wizard_step' not in st.session_state:
+        st.session_state.bulk_wizard_step = 0
+    if 'bulk_wizard_data' not in st.session_state:
+        st.session_state.bulk_wizard_data = {}
     
-    ⚠️ **Note:** User-provided distances and coordinates are used temporarily for pricing but are **NOT** saved to our reference data. They are logged to "Bulk Adjustments" sheet for review.
+    def reset_wizard():
+        """Reset the wizard to initial state"""
+        st.session_state.bulk_wizard_step = 0
+        st.session_state.bulk_wizard_data = {}
+        # Clear related session state
+        for key in list(st.session_state.keys()):
+            if key.startswith('bulk_') and key not in ['bulk_wizard_step', 'bulk_wizard_data']:
+                del st.session_state[key]
     
-    **Output columns:**
-    - Distance, Buy Price (rounded to 100), Sell Price (rounded to 50)
-    - Target Margin, Backhaul Probability
-    - Model Used, Confidence, Recent Count
-    """)
+    # Show current step indicator
+    steps = ["📤 Upload", "🏙️ Cities", "📏 Distances", "💰 Pricing"]
+    current_step = st.session_state.bulk_wizard_step
     
-    # Template button - populates Template sheet in RFQ spreadsheet
-    if st.button("📋 Open Template in Google Sheets", help="Opens/updates the Template sheet in the RFQ spreadsheet"):
-        template_df = pd.DataFrame({
-            'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
-            'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
-            'Distance': ['', '', '450'],
-            'Vehicle_Type': ['Flatbed Trailer', '', ''],
-            'Pickup_Lat': ['', '', '24.7136'],
-            'Pickup_Lon': ['', '', '46.6753'],
-            'Dropoff_Lat': ['', '', '21.4858'],
-            'Dropoff_Lon': ['', '', '39.1925']
-        })
-        
-        success, msg = populate_rfq_template_sheet(template_df)
-        if success:
-            rfq_url = st.secrets.get('RFQ_url', '')
-            st.success(msg)
-            if rfq_url:
-                # Create a direct link to the Template sheet
-                base_url = rfq_url.split('/edit')[0]
-                st.markdown(f"[🔗 Open Template Sheet]({base_url}/edit#gid=0)")
-        else:
-            st.error(msg)
+    # Progress indicator
+    cols = st.columns(len(steps))
+    for i, (col, step_name) in enumerate(zip(cols, steps)):
+        with col:
+            if i < current_step:
+                st.success(f"✅ {step_name}")
+            elif i == current_step:
+                st.info(f"➡️ {step_name}")
+            else:
+                st.caption(f"⬜ {step_name}")
     
-    upl = st.file_uploader("Upload CSV", type=['csv'])
-    
-    if upl:
-        try:
-            r_df = pd.read_csv(upl)
-            st.success(f"✅ Loaded {len(r_df)} routes")
-            
-            with st.expander("📋 Preview"):
-                st.dataframe(r_df.head(10), use_container_width=True)
-            
-            # --- NEW: Multi-Select Vehicle Checkboxes ---
-            st.markdown("---")
-            st.markdown("##### 🔧 Bulk Settings")
-            st.caption("Select vehicle types to apply to ALL routes. If you select multiple, each route will be priced multiple times (once per vehicle).")
-            
-            # Create a grid layout for checkboxes (4 columns)
-            # This avoids a super long vertical list
-            v_cols = st.columns(4)
-            selected_vehicles_en = []
-            
-            # Iterate through all available vehicle types and create a checkbox for each
-            for i, v_en in enumerate(vehicle_types_en):
-                col_idx = i % 4
-                with v_cols[col_idx]:
-                    # Check 'Flatbed Trailer' by default for convenience
-                    is_checked = st.checkbox(v_en, value=(v_en == 'Flatbed Trailer'))
-                    if is_checked:
-                        selected_vehicles_en.append(v_en)
-            
-            if not selected_vehicles_en:
-                st.info("ℹ️ No global vehicles selected. The app will look for a 'Vehicle Type' column in your CSV for each row.")
-            # --------------------------------------------
-
-            if st.button("🔍 Look Up All Routes", type="primary", use_container_width=True):
-                res = []
-                unmat_cities = []  # Unmatched cities
-                missing_distances = []  # Missing distances
-                prog = st.progress(0)
-                status_text = st.empty()
-                
-                # Get column values by position (iloc), not by name
-                for i in range(len(r_df)):
-                    row = r_df.iloc[i]
-                    
-                    # Column 1: Pickup (required)
-                    p_raw = str(row.iloc[0]).strip() if len(row) > 0 else ''
-                    
-                    # Column 2: Destination (required)
-                    d_raw = str(row.iloc[1]).strip() if len(row) > 1 else ''
-                    
-                    # Column 3: Distance (optional - used temporarily only)
-                    dist_override = None
-                    user_provided_distance = False
-                    if len(row) > 2:
-                        dist_val = row.iloc[2]
-                        if pd.notna(dist_val) and str(dist_val).strip() not in ['', 'nan', 'None']:
-                            try:
-                                dist_override = float(str(dist_val).replace(',', '').strip())
-                                if dist_override > 0:
-                                    user_provided_distance = True
-                            except ValueError:
-                                pass
-                    
-                    # Columns 5-8: Lat/Lon coordinates (optional)
-                    pickup_lat, pickup_lon, dropoff_lat, dropoff_lon = None, None, None, None
-                    user_provided_coords = False
-                    
-                    if len(row) > 4:
-                        try:
-                            val = row.iloc[4]
-                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
-                                pickup_lat = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    if len(row) > 5:
-                        try:
-                            val = row.iloc[5]
-                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
-                                pickup_lon = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    if len(row) > 6:
-                        try:
-                            val = row.iloc[6]
-                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
-                                dropoff_lat = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    if len(row) > 7:
-                        try:
-                            val = row.iloc[7]
-                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
-                                dropoff_lon = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
-
-                    # Parse Weight (Column 9 / Index 8)
-                    weight_val = None
-                    if len(row) > 8:
-                        try:
-                            val = row.iloc[8]
-                            if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
-                                weight_val = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    # Check if user provided any coordinates
-                    if pickup_lat is not None or pickup_lon is not None or dropoff_lat is not None or dropoff_lon is not None:
-                        user_provided_coords = True
-                    
-                    # Detect provinces from coordinates if provided
-                    pickup_province, pickup_region = None, None
-                    dropoff_province, dropoff_region = None, None
-                    
-                    if pickup_lat is not None and pickup_lon is not None:
-                        pickup_province, pickup_region = get_province_from_coordinates(pickup_lat, pickup_lon)
-                    
-                    if dropoff_lat is not None and dropoff_lon is not None:
-                        dropoff_province, dropoff_region = get_province_from_coordinates(dropoff_lat, dropoff_lon)
-                    
-                    # Normalize cities
-                    p_ar, p_ok = normalize_city(p_raw)
-                    d_ar, d_ok = normalize_city(d_raw)
-                    
-                    if not p_ok: 
-                        classification = classify_unmatched_city(p_raw)
-                        unmat_cities.append({
-                            'Row': i+1, 
-                            'Col': 'Pickup (Col 1)', 
-                            'Val': p_raw,
-                            'Error': classification['error_type'],
-                            'Action': classification['action'],
-                            'Detected_Province': pickup_province or '',
-                            'Detected_Region': pickup_region or ''
-                        })
-                        log_exception(classification['error_type'], {
-                            'row': i+1, 
-                            'column': 'Pickup', 
-                            'original_value': p_raw,
-                            'message': classification['message'],
-                            'action': classification['action'],
-                            'in_historical_data': classification['in_historical_data'],
-                            'detected_province': pickup_province,
-                            'detected_region': pickup_region
-                        })
-                    
-                    if not d_ok: 
-                        classification = classify_unmatched_city(d_raw)
-                        unmat_cities.append({
-                            'Row': i+1, 
-                            'Col': 'Destination (Col 2)', 
-                            'Val': d_raw,
-                            'Error': classification['error_type'],
-                            'Action': classification['action'],
-                            'Detected_Province': dropoff_province or '',
-                            'Detected_Region': dropoff_region or ''
-                        })
-                        log_exception(classification['error_type'], {
-                            'row': i+1, 
-                            'column': 'Destination', 
-                            'original_value': d_raw,
-                            'message': classification['message'],
-                            'action': classification['action'],
-                            'in_historical_data': classification['in_historical_data'],
-                            'detected_province': dropoff_province,
-                            'detected_region': dropoff_region
-                        })
-                    
-                    # Log to Bulk Adjustments sheet if user provided distance or coordinates
-                    if user_provided_distance or user_provided_coords:
-                        log_bulk_adjustment(
-                            row_num=i+1,
-                            pickup_city=p_raw,
-                            dest_city=d_raw,
-                            pickup_en=to_english_city(p_ar) if p_ok else p_raw,
-                            dest_en=to_english_city(d_ar) if d_ok else d_raw,
-                            user_distance=dist_override if user_provided_distance else None,
-                            pickup_lat=pickup_lat,
-                            pickup_lon=pickup_lon,
-                            dropoff_lat=dropoff_lat,
-                            dropoff_lon=dropoff_lon,
-                            pickup_province=pickup_province,
-                            dropoff_province=dropoff_province,
-                            pickup_region=pickup_region,
-                            dropoff_region=dropoff_region
-                        )
-                    
-                    # --- VEHICLE LOOP LOGIC ---
-                    # Determine which vehicles to run for this row
-                    vehicles_to_run = []
-                    
-                    if selected_vehicles_en:
-                        # 1. Use the selected checkboxes (Global Override)
-                        vehicles_to_run = [to_arabic_vehicle(v) for v in selected_vehicles_en]
-                    else:
-                        # 2. Fallback to CSV Column 4 if no checkboxes selected
-                        v_raw = ''
-                        if len(row) > 3:
-                            v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
-                        v_ar = to_arabic_vehicle(v_raw) if v_raw not in ['', 'nan', 'None', 'Auto'] else DEFAULT_VEHICLE_AR
-                        vehicles_to_run = [v_ar]
-                    
-                    # Run pricing for EACH selected vehicle
-                    for v_ar in vehicles_to_run:
-                        # Pass distance override, regions and weight to lookup function
-                        route_result = lookup_route_stats(
-                            p_ar, d_ar, v_ar, 
-                            dist_override=dist_override,
-                            pickup_region_override=pickup_region,
-                            dest_region_override=dropoff_region,
-                            weight=weight_val
-                        )
-                        
-                        # Add CSV Row number context for clarity in results
-                        route_result['CSV_Row'] = i + 1
-                        
-                        # Track missing distances (only once per unique route to avoid duplicates in log)
-                        # We use a key of (From, To) to check duplicates in the local missing_distances list
-                        is_missing = route_result.get('Distance', 0) == 0 or route_result.get('Distance_Source') == 'Missing'
-                        if is_missing:
-                            # Simple check to avoid spamming the missing list for the same route 5 times
-                            already_logged = any(m['Row'] == i+1 and m['From'] == route_result.get('From') and m['To'] == route_result.get('To') for m in missing_distances)
-                            if not already_logged:
-                                missing_distances.append({
-                                    'Row': i+1,
-                                    'From': route_result.get('From', p_raw),
-                                    'To': route_result.get('To', d_raw),
-                                    'Distance': route_result.get('Distance', 0),
-                                    'Status': 'Missing - needs Google Maps lookup'
-                                })
-                        
-                        res.append(route_result)
-                    # ---------------------------
-                    
-                    prog.progress((i+1)/len(r_df))
-                    status_text.text(f"Looking up {i+1}/{len(r_df)}: {p_raw} → {d_raw}")
-                
-                status_text.text("✅ Complete!")
-                st.session_state.bulk_results = pd.DataFrame(res)
-                st.session_state.bulk_unmatched_cities = pd.DataFrame(unmat_cities)
-                st.session_state.bulk_missing_distances = pd.DataFrame(missing_distances)
-                
-                # Flush any pending error logs to Google Sheets in one batch
-                flushed_ok, flushed_count = flush_error_log_to_sheet()
-                if flushed_count > 0:
-                    st.caption(f"📝 Logged {flushed_count} exceptions to error sheet")
-                
-                # Flush any pending matched distances to Google Sheets
-                dist_ok, dist_count = flush_matched_distances_to_sheet()
-                if dist_count > 0:
-                    st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
-                
-                # Flush any pending bulk adjustments to Google Sheets
-                adj_ok, adj_count = flush_bulk_adjustments_to_sheet()
-                if adj_count > 0:
-                    st.caption(f"📋 Logged {adj_count} user-provided adjustments for review")
-                    
-        except Exception as e: st.error(f"Error: {e}")
-            
-    # Results Display (Outside indentation so it persists)
-    if 'bulk_results' in st.session_state and not st.session_state.bulk_results.empty:
-        res_df = st.session_state.bulk_results
-        st.markdown("---")
-        st.subheader("📊 Results")
-        st.dataframe(res_df, use_container_width=True, hide_index=True)
-
-    # Separate tables for unmatched cities and missing distances
     st.markdown("---")
     
-    # Table 1: Unmatched Cities
-    if 'bulk_unmatched_cities' in st.session_state and not st.session_state.bulk_unmatched_cities.empty:
-        st.subheader("⚠️ Unmatched Cities")
-        st.warning(f"{len(st.session_state.bulk_unmatched_cities)} city names could not be matched to our database")
-        st.dataframe(st.session_state.bulk_unmatched_cities, use_container_width=True, hide_index=True)
-        st.download_button(
-            "📥 Download Unmatched Cities", 
-            st.session_state.bulk_unmatched_cities.to_csv(index=False), 
-            "unmatched_cities.csv", 
-            "text/csv",
-            key="download_unmatched_cities"
-        )
+    # ============================================
+    # STEP 0: Upload & Username
+    # ============================================
+    if current_step == 0:
+        st.markdown("### Step 1: Upload CSV & Enter Your Name")
+        
+        st.markdown("""
+        **Columns (by position, names ignored):**
+        1. **Pickup City** (required)
+        2. **Destination City** (required)
+        3. **Distance** (optional - overrides lookup)
+        4. **Vehicle Type** (optional - default: Flatbed Trailer)
+        """)
+        
+        # Username input
+        username = st.text_input("👤 Your Name", key='bulk_username', 
+                                  placeholder="Enter your name for tracking",
+                                  help="Your name will be logged with any changes you make")
+        
+        # Template button
+        if st.button("📋 Open Template in Google Sheets"):
+            template_df = pd.DataFrame({
+                'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
+                'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
+                'Distance': ['', '', '450'],
+                'Vehicle_Type': ['Flatbed Trailer', '', '']
+            })
+            success, msg = populate_rfq_template_sheet(template_df)
+            if success:
+                rfq_url = st.secrets.get('RFQ_url', '')
+                st.success(msg)
+                if rfq_url:
+                    st.markdown(f"[🔗 Open Template Sheet]({rfq_url})")
+            else:
+                st.error(msg)
+        
+        # File uploader
+        upl = st.file_uploader("Upload CSV", type=['csv'], key='bulk_csv_upload')
+        
+        if upl:
+            try:
+                r_df = pd.read_csv(upl)
+                st.success(f"✅ Loaded {len(r_df)} routes")
+                
+                with st.expander("📋 Preview Data"):
+                    st.dataframe(r_df.head(10), use_container_width=True)
+                
+                # Vehicle type selection
+                st.markdown("##### 🚛 Vehicle Types")
+                st.caption("Select vehicle types to price. Multiple selections will create multiple pricing rows per route.")
+                
+                v_cols = st.columns(4)
+                selected_vehicles = []
+                for i, v_en in enumerate(vehicle_types_en):
+                    with v_cols[i % 4]:
+                        if st.checkbox(v_en, value=(v_en == 'Flatbed Trailer'), key=f'vtype_{v_en}'):
+                            selected_vehicles.append(v_en)
+                
+                if not selected_vehicles:
+                    st.warning("Please select at least one vehicle type")
+                
+                # Proceed button
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    if st.button("▶️ Analyze Cities", type="primary", use_container_width=True,
+                                disabled=not username or not selected_vehicles):
+                        if not username:
+                            st.error("Please enter your name")
+                        elif not selected_vehicles:
+                            st.error("Please select at least one vehicle type")
+                        else:
+                            # Parse the CSV and find unmatched cities
+                            unmatched_cities = {}  # {original_name: {rows: [...], col: 'Pickup'/'Destination'}}
+                            parsed_rows = []
+                            
+                            for i in range(len(r_df)):
+                                row = r_df.iloc[i]
+                                p_raw = str(row.iloc[0]).strip() if len(row) > 0 else ''
+                                d_raw = str(row.iloc[1]).strip() if len(row) > 1 else ''
+                                
+                                # Parse distance
+                                dist_override = None
+                                if len(row) > 2:
+                                    try:
+                                        val = row.iloc[2]
+                                        if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
+                                            dist_override = float(str(val).replace(',', '').strip())
+                                    except (ValueError, TypeError):
+                                        pass
+                                
+                                # Parse vehicle
+                                v_raw = ''
+                                if len(row) > 3:
+                                    v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
+                                
+                                # Normalize cities
+                                p_ar, p_ok = normalize_city(p_raw)
+                                d_ar, d_ok = normalize_city(d_raw)
+                                
+                                # Track unmatched
+                                if not p_ok and p_raw:
+                                    if p_raw not in unmatched_cities:
+                                        unmatched_cities[p_raw] = {'rows': [], 'col': 'Pickup'}
+                                    unmatched_cities[p_raw]['rows'].append(i + 1)
+                                
+                                if not d_ok and d_raw:
+                                    if d_raw not in unmatched_cities:
+                                        unmatched_cities[d_raw] = {'rows': [], 'col': 'Destination'}
+                                    unmatched_cities[d_raw]['rows'].append(i + 1)
+                                
+                                parsed_rows.append({
+                                    'row_num': i + 1,
+                                    'pickup_raw': p_raw,
+                                    'dest_raw': d_raw,
+                                    'pickup_ar': p_ar,
+                                    'dest_ar': d_ar,
+                                    'pickup_ok': p_ok,
+                                    'dest_ok': d_ok,
+                                    'dist_override': dist_override,
+                                    'vehicle_raw': v_raw
+                                })
+                            
+                            # Store in session state
+                            st.session_state.bulk_wizard_data = {
+                                'username': username,
+                                'selected_vehicles': selected_vehicles,
+                                'parsed_rows': parsed_rows,
+                                'unmatched_cities': unmatched_cities,
+                                'original_df': r_df
+                            }
+                            
+                            # Move to next step
+                            if unmatched_cities:
+                                # Run fuzzy matching for all unmatched
+                                if RAPIDFUZZ_AVAILABLE:
+                                    fuzzy_results = batch_fuzzy_match_cities(list(unmatched_cities.keys()), threshold=80)
+                                    st.session_state.bulk_wizard_data['fuzzy_results'] = fuzzy_results
+                                st.session_state.bulk_wizard_step = 1
+                            else:
+                                # No unmatched cities, skip to distance review
+                                st.session_state.bulk_wizard_step = 2
+                            st.rerun()
+                
+                with col2:
+                    if st.button("🔄 Reset", use_container_width=True):
+                        reset_wizard()
+                        st.rerun()
+                        
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
     
-    # Table 2: Missing Distances
-    if 'bulk_missing_distances' in st.session_state and not st.session_state.bulk_missing_distances.empty:
-        st.subheader("📏 Missing Distances")
-        st.info(f"{len(st.session_state.bulk_missing_distances)} routes have missing distances (logged for Google Maps lookup)")
-        st.dataframe(st.session_state.bulk_missing_distances, use_container_width=True, hide_index=True)
-        st.download_button(
-            "📥 Download Missing Distances", 
-            st.session_state.bulk_missing_distances.to_csv(index=False), 
-            "missing_distances.csv", 
-            "text/csv",
-            key="download_missing_distances"
-        )
-
-    # Download & Cloud Upload Section (after unmatched sections)
-    if 'bulk_results' in st.session_state and not st.session_state.bulk_results.empty:
-        res_df = st.session_state.bulk_results
+    # ============================================
+    # STEP 1: City Resolution
+    # ============================================
+    elif current_step == 1:
+        st.markdown("### Step 2: Resolve Unmatched Cities")
+        
+        wizard_data = st.session_state.bulk_wizard_data
+        unmatched = wizard_data.get('unmatched_cities', {})
+        fuzzy_results = wizard_data.get('fuzzy_results', {})
+        username = wizard_data.get('username', '')
+        
+        if not unmatched:
+            st.success("All cities matched! Proceeding to distance review...")
+            st.session_state.bulk_wizard_step = 2
+            st.rerun()
+        
+        st.info(f"Found **{len(unmatched)}** unique unmatched city names across your routes.")
+        
+        # Initialize resolution state if not exists
+        if 'city_resolutions' not in st.session_state:
+            st.session_state.city_resolutions = {}
+        
+        # Build resolution table
+        st.markdown("#### Review and resolve each city:")
+        st.caption("Accept the suggested match, or provide coordinates for a new city.")
+        
+        for idx, (city_name, info) in enumerate(unmatched.items()):
+            with st.expander(f"🏙️ **{city_name}** (appears in {len(info['rows'])} rows)", expanded=True):
+                fuzzy = fuzzy_results.get(city_name, {})
+                
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    st.caption(f"Column: {info['col']} | Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
+                    
+                    # Show fuzzy match suggestion
+                    if fuzzy.get('match_found'):
+                        confidence = fuzzy.get('confidence', 0)
+                        suggested = fuzzy.get('suggested_canonical', '')
+                        suggested_en = to_english_city(suggested)
+                        
+                        if confidence >= 90:
+                            st.success(f"✅ High confidence match: **{suggested_en}** ({confidence}%)")
+                        else:
+                            st.warning(f"⚠️ Possible match: **{suggested_en}** ({confidence}%)")
+                        
+                        # Show other matches if available
+                        all_matches = fuzzy.get('all_matches', [])
+                        if len(all_matches) > 1:
+                            with st.expander("Other possible matches"):
+                                for m in all_matches[1:4]:
+                                    st.caption(f"• {to_english_city(m['canonical'])} ({m['score']}%)")
+                    else:
+                        st.error("❌ No good match found - please provide coordinates for a new city")
+                
+                with col2:
+                    # Resolution options
+                    resolution_key = f"res_{idx}"
+                    
+                    if fuzzy.get('match_found'):
+                        accept = st.checkbox(f"Accept suggestion", 
+                                           value=fuzzy.get('confidence', 0) >= 90,
+                                           key=f"accept_{idx}")
+                        
+                        if accept:
+                            st.session_state.city_resolutions[city_name] = {
+                                'type': 'fuzzy_match',
+                                'canonical': fuzzy.get('suggested_canonical'),
+                                'confidence': fuzzy.get('confidence'),
+                                'english': to_english_city(fuzzy.get('suggested_canonical'))
+                            }
+                        else:
+                            # Show coordinate input for new city
+                            st.markdown("**Add as new city:**")
+                            lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
+                            lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
+                            
+                            if lat != 0 and lon != 0:
+                                # Auto-detect province
+                                province, region = get_province_from_coordinates(lat, lon)
+                                if province:
+                                    st.success(f"📍 Detected: {province} → {region}")
+                                else:
+                                    st.warning("Could not detect province from coordinates")
+                                    region = st.selectbox("Select Region", 
+                                                         options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
+                                                         key=f"region_{idx}")
+                                    province = None
+                                
+                                st.session_state.city_resolutions[city_name] = {
+                                    'type': 'new_city',
+                                    'canonical': city_name,  # Use original as canonical
+                                    'latitude': lat,
+                                    'longitude': lon,
+                                    'province': province,
+                                    'region': region
+                                }
+                    else:
+                        # Must provide coordinates
+                        st.markdown("**Add as new city:**")
+                        lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
+                        lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
+                        
+                        if lat != 0 and lon != 0:
+                            province, region = get_province_from_coordinates(lat, lon)
+                            if province:
+                                st.success(f"📍 Detected: {province} → {region}")
+                            else:
+                                st.warning("Could not detect province from coordinates")
+                                region = st.selectbox("Select Region", 
+                                                     options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
+                                                     key=f"region_{idx}")
+                                province = None
+                            
+                            st.session_state.city_resolutions[city_name] = {
+                                'type': 'new_city',
+                                'canonical': city_name,
+                                'latitude': lat,
+                                'longitude': lon,
+                                'province': province,
+                                'region': region
+                            }
+        
+        # Check if all resolved
+        resolved_count = len(st.session_state.city_resolutions)
+        total_unmatched = len(unmatched)
+        
         st.markdown("---")
-        st.subheader("Save 🚀")
+        st.markdown(f"**Resolved: {resolved_count}/{total_unmatched}**")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("⬅️ Back", use_container_width=True):
+                st.session_state.bulk_wizard_step = 0
+                st.rerun()
+        
+        with col2:
+            if st.button("▶️ Apply Resolutions & Check Distances", type="primary", 
+                        use_container_width=True, disabled=resolved_count < total_unmatched):
+                if resolved_count < total_unmatched:
+                    st.error("Please resolve all unmatched cities before proceeding")
+                else:
+                    # Apply resolutions
+                    resolutions = st.session_state.city_resolutions
+                    new_entries = []
+                    
+                    for city_name, resolution in resolutions.items():
+                        if resolution['type'] == 'fuzzy_match':
+                            # Log fuzzy match
+                            log_city_match(
+                                original_input=city_name,
+                                matched_canonical=resolution['canonical'],
+                                match_type='Fuzzy Match Confirmed',
+                                confidence=resolution['confidence'],
+                                user=username,
+                                source='bulk_upload',
+                                immediate=False
+                            )
+                            # Add to temporary normalization
+                            new_entries.append({
+                                'variant': city_name,
+                                'canonical': resolution['canonical'],
+                                'region': get_city_region(resolution['canonical']),
+                                'province': get_city_province(resolution['canonical'])
+                            })
+                            # Log to Append sheet
+                            log_to_append_sheet(
+                                variant=city_name,
+                                canonical=resolution['canonical'],
+                                region=get_city_region(resolution['canonical']),
+                                province=get_city_province(resolution['canonical']),
+                                source='fuzzy_match',
+                                user=username,
+                                immediate=False
+                            )
+                        else:
+                            # New city
+                            log_city_match(
+                                original_input=city_name,
+                                matched_canonical=resolution['canonical'],
+                                match_type='New City',
+                                confidence=None,
+                                latitude=resolution.get('latitude'),
+                                longitude=resolution.get('longitude'),
+                                province=resolution.get('province'),
+                                region=resolution.get('region'),
+                                user=username,
+                                source='bulk_upload',
+                                immediate=False
+                            )
+                            new_entries.append({
+                                'variant': city_name,
+                                'canonical': resolution['canonical'],
+                                'region': resolution.get('region'),
+                                'province': resolution.get('province'),
+                                'latitude': resolution.get('latitude'),
+                                'longitude': resolution.get('longitude')
+                            })
+                            # Log to Append sheet
+                            log_to_append_sheet(
+                                variant=city_name,
+                                canonical=resolution['canonical'],
+                                region=resolution.get('region'),
+                                province=resolution.get('province'),
+                                latitude=resolution.get('latitude'),
+                                longitude=resolution.get('longitude'),
+                                source='new_city',
+                                user=username,
+                                immediate=False
+                            )
+                    
+                    # Update in-memory normalization
+                    update_city_normalization_pickle(new_entries)
+                    
+                    # Flush to sheets
+                    flush_matched_cities_to_sheet()
+                    flush_append_sheet()
+                    
+                    # Update parsed rows with new canonical names
+                    parsed_rows = wizard_data['parsed_rows']
+                    for row in parsed_rows:
+                        if not row['pickup_ok']:
+                            res = resolutions.get(row['pickup_raw'])
+                            if res:
+                                row['pickup_ar'] = res['canonical']
+                                row['pickup_ok'] = True
+                        if not row['dest_ok']:
+                            res = resolutions.get(row['dest_raw'])
+                            if res:
+                                row['dest_ar'] = res['canonical']
+                                row['dest_ok'] = True
+                    
+                    st.session_state.bulk_wizard_data['parsed_rows'] = parsed_rows
+                    st.session_state.bulk_wizard_data['applied_resolutions'] = resolutions
+                    
+                    # Move to distance review
+                    st.session_state.bulk_wizard_step = 2
+                    st.rerun()
+        
+        with col3:
+            if st.button("🔄 Reset", use_container_width=True):
+                reset_wizard()
+                st.rerun()
+    
+    # ============================================
+    # STEP 2: Distance Review
+    # ============================================
+    elif current_step == 2:
+        st.markdown("### Step 3: Review Distances")
+        
+        wizard_data = st.session_state.bulk_wizard_data
+        parsed_rows = wizard_data.get('parsed_rows', [])
+        username = wizard_data.get('username', '')
+        
+        # Calculate distances for all routes
+        if 'distance_results' not in st.session_state.bulk_wizard_data:
+            st.info("Checking distances for all routes...")
+            
+            # Get unique city pairs
+            city_pairs = {}
+            for row in parsed_rows:
+                pair_key = (row['pickup_ar'], row['dest_ar'])
+                if pair_key not in city_pairs:
+                    # Check if distance exists
+                    dist, source = get_distance(row['pickup_ar'], row['dest_ar'], immediate_log=False)
+                    city_pairs[pair_key] = {
+                        'pickup_ar': row['pickup_ar'],
+                        'dest_ar': row['dest_ar'],
+                        'pickup_en': to_english_city(row['pickup_ar']),
+                        'dest_en': to_english_city(row['dest_ar']),
+                        'distance': dist,
+                        'source': source,
+                        'user_override': row.get('dist_override'),
+                        'rows': []
+                    }
+                city_pairs[pair_key]['rows'].append(row['row_num'])
+            
+            # Flush missing distances to MatchedDistances sheet
+            flush_matched_distances_to_sheet()
+            
+            st.session_state.bulk_wizard_data['distance_results'] = city_pairs
+            st.rerun()
+        
+        distance_results = st.session_state.bulk_wizard_data.get('distance_results', {})
+        
+        # Separate missing/new distances from existing
+        missing_distances = {k: v for k, v in distance_results.items() 
+                           if v['distance'] == 0 or v['source'] == 'Missing'}
+        existing_distances = {k: v for k, v in distance_results.items() 
+                            if v['distance'] > 0 and v['source'] != 'Missing'}
+        
+        st.info(f"Found **{len(missing_distances)}** routes needing distance lookup, **{len(existing_distances)}** with existing distances.")
+        
+        # Initialize distance edits state
+        if 'distance_edits' not in st.session_state:
+            st.session_state.distance_edits = {}
+        
+        # Show missing distances first (needing attention)
+        if missing_distances:
+            st.markdown("#### ⚠️ Routes Needing Distances")
+            st.caption("These routes are missing distances. Enter values manually or wait for Google Maps API.")
+            
+            for pair_key, info in missing_distances.items():
+                with st.expander(f"📏 {info['pickup_en']} → {info['dest_en']} ({len(info['rows'])} routes)", expanded=True):
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    
+                    with col1:
+                        st.caption(f"Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
+                        if info['user_override']:
+                            st.info(f"User provided: {info['user_override']} km")
+                    
+                    with col2:
+                        # Distance input
+                        dist_key = f"dist_{pair_key[0]}_{pair_key[1]}"
+                        default_val = info['user_override'] if info['user_override'] else 0.0
+                        new_dist = st.number_input(
+                            "Distance (km)",
+                            min_value=0.0,
+                            max_value=5000.0,
+                            value=float(default_val),
+                            step=10.0,
+                            key=dist_key
+                        )
+                        
+                        if new_dist > 0:
+                            st.session_state.distance_edits[pair_key] = new_dist
+                    
+                    with col3:
+                        if new_dist > 0:
+                            st.success("✅")
+                        else:
+                            st.warning("⚠️")
+        
+        # Show existing distances (for review/edit)
+        if existing_distances:
+            st.markdown("#### ✅ Routes with Distances")
+            st.caption("Review and edit if needed.")
+            
+            # Create a dataframe for display
+            dist_df = pd.DataFrame([
+                {
+                    'From': info['pickup_en'],
+                    'To': info['dest_en'],
+                    'Distance (km)': info['distance'],
+                    'Source': info['source'],
+                    'Routes': len(info['rows'])
+                }
+                for info in existing_distances.values()
+            ])
+            
+            st.dataframe(dist_df, use_container_width=True, hide_index=True)
+            
+            with st.expander("Edit existing distances"):
+                for pair_key, info in existing_distances.items():
+                    col1, col2 = st.columns([3, 2])
+                    with col1:
+                        st.text(f"{info['pickup_en']} → {info['dest_en']}")
+                    with col2:
+                        dist_key = f"dist_edit_{pair_key[0]}_{pair_key[1]}"
+                        new_dist = st.number_input(
+                            "Distance (km)",
+                            min_value=0.0,
+                            max_value=5000.0,
+                            value=float(info['distance']),
+                            step=10.0,
+                            key=dist_key,
+                            label_visibility="collapsed"
+                        )
+                        if new_dist != info['distance']:
+                            st.session_state.distance_edits[pair_key] = new_dist
+        
+        # Navigation
+        st.markdown("---")
+        
+        # Check if all missing distances are resolved
+        all_resolved = all(
+            pair_key in st.session_state.distance_edits or info['user_override']
+            for pair_key, info in missing_distances.items()
+        )
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("⬅️ Back", use_container_width=True):
+                st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
+                st.rerun()
+        
+        with col2:
+            proceed_disabled = bool(missing_distances) and not all_resolved
+            if st.button("▶️ Generate Pricing", type="primary", use_container_width=True,
+                        disabled=proceed_disabled):
+                # Log distance edits as user suggestions
+                for pair_key, new_dist in st.session_state.distance_edits.items():
+                    pickup_ar, dest_ar = pair_key
+                    info = distance_results.get(pair_key, {})
+                    old_dist = info.get('distance', 0)
+                    
+                    if new_dist != old_dist:
+                        # Log as user suggestion to MatchedDistances
+                        suggest_distance_change(
+                            pickup_ar=pickup_ar,
+                            dest_ar=dest_ar,
+                            pickup_en=info.get('pickup_en', to_english_city(pickup_ar)),
+                            dest_en=info.get('dest_en', to_english_city(dest_ar)),
+                            current_distance=old_dist,
+                            suggested_distance=new_dist,
+                            user_name=username
+                        )
+                
+                # Store final distances
+                final_distances = {}
+                for pair_key, info in distance_results.items():
+                    if pair_key in st.session_state.distance_edits:
+                        final_distances[pair_key] = st.session_state.distance_edits[pair_key]
+                    elif info['user_override']:
+                        final_distances[pair_key] = info['user_override']
+                    else:
+                        final_distances[pair_key] = info['distance']
+                
+                st.session_state.bulk_wizard_data['final_distances'] = final_distances
+                st.session_state.bulk_wizard_step = 3
+                st.rerun()
+        
+        with col3:
+            if st.button("🔄 Reset", use_container_width=True):
+                reset_wizard()
+                st.rerun()
+    
+    # ============================================
+    # STEP 3: Final Pricing
+    # ============================================
+    elif current_step == 3:
+        st.markdown("### Step 4: Pricing Results")
+        
+        wizard_data = st.session_state.bulk_wizard_data
+        parsed_rows = wizard_data.get('parsed_rows', [])
+        selected_vehicles = wizard_data.get('selected_vehicles', ['Flatbed Trailer'])
+        final_distances = wizard_data.get('final_distances', {})
+        username = wizard_data.get('username', '')
+        
+        # Generate pricing
+        if 'bulk_results' not in st.session_state or st.session_state.get('bulk_results_stale', True):
+            results = []
+            
+            progress = st.progress(0)
+            status = st.empty()
+            
+            for i, row in enumerate(parsed_rows):
+                pickup_ar = row['pickup_ar']
+                dest_ar = row['dest_ar']
+                pair_key = (pickup_ar, dest_ar)
+                
+                # Get distance
+                dist_override = final_distances.get(pair_key, row.get('dist_override'))
+                
+                # Price for each selected vehicle
+                for v_en in selected_vehicles:
+                    v_ar = to_arabic_vehicle(v_en)
+                    
+                    result = lookup_route_stats(
+                        pickup_ar, dest_ar, v_ar,
+                        dist_override=dist_override
+                    )
+                    result['CSV_Row'] = row['row_num']
+                    results.append(result)
+                
+                progress.progress((i + 1) / len(parsed_rows))
+                status.text(f"Pricing {i + 1}/{len(parsed_rows)}: {row['pickup_raw']} → {row['dest_raw']}")
+            
+            status.text("✅ Complete!")
+            st.session_state.bulk_results = pd.DataFrame(results)
+            st.session_state.bulk_results_stale = False
+            
+            # Flush logs
+            flush_error_log_to_sheet()
+            flush_matched_distances_to_sheet()
+        
+        # Display results
+        res_df = st.session_state.bulk_results
+        
+        st.success(f"Generated pricing for **{len(res_df)}** route-vehicle combinations")
+        
+        st.dataframe(res_df, use_container_width=True, hide_index=True)
+        
+        # Save section
+        st.markdown("---")
+        st.subheader("💾 Save Results")
         
         rfq_sheet_url = st.secrets.get('RFQ_url', '')
         
-        if rfq_sheet_url:
-            # Hyperlinked text for the sheet
-            st.markdown(f"Target Spreadsheet: [**RFQ Pricing Sheet**]({rfq_sheet_url})")
-            
-            # Prompt for sheet name
-            default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
-            sheet_name = st.text_input(
-                "Sheet Name", 
-                value=default_sheet_name,
-                help="Enter a unique name for the new sheet tab. This prevents overwriting existing data.",
-                key="rfq_sheet_name"
-            )
-            
-            # Create two columns for the buttons to sit side-by-side
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Upload Button (Left)
-                upload_clicked = st.button("☁️ Upload to Google Sheet", type="secondary", key="upload_to_rfq", use_container_width=True)
-                
-            with col2:
-                # Download Button (Right) - Changed type to 'secondary' to match color and removed 'primary' (red)
-                st.download_button(
-                    "📥 Download Results CSV", 
-                    res_df.to_csv(index=False), 
-                    "pricing_results.csv", 
-                    "text/csv", 
-                    type="secondary",
-                    key="download_results_csv",
-                    use_container_width=True
-                )
-
-            # Upload Logic
-            if upload_clicked:
-                if not sheet_name or sheet_name.strip() == '':
-                    st.error("Please enter a sheet name")
-                else:
-                    upload_progress = st.progress(0)
-                    upload_status = st.empty()
-                    
-                    def update_progress(rows_done, total_rows, batch_num):
-                        upload_progress.progress(rows_done / total_rows)
-                        upload_status.text(f"Uploaded {rows_done:,}/{total_rows:,} rows (batch {batch_num})...")
-                    
-                    ok, msg = upload_to_rfq_sheet(res_df, sheet_name.strip(), batch_size=500, progress_callback=update_progress)
-                    
-                    upload_progress.progress(1.0)
-                    upload_status.empty()
-                    
-                    if ok: 
-                        st.success(msg)
-                        # Popup button to open the sheet directly
-                        st.link_button("🔗 Open Target Sheet", rfq_sheet_url, type="primary")
-                    else: 
-                        st.error(msg)
-        else:
-            # Fallback if RFQ_url is not configured
-            st.warning("RFQ_url not configured in secrets. Cloud upload unavailable.")
+        col1, col2 = st.columns(2)
+        
+        with col1:
             st.download_button(
-                "📥 Download Results CSV", 
-                res_df.to_csv(index=False), 
-                "pricing_results.csv", 
-                "text/csv", 
-                type="secondary",
-                key="download_results_csv",
+                "📥 Download CSV",
+                res_df.to_csv(index=False),
+                "pricing_results.csv",
+                "text/csv",
+                type="primary",
                 use_container_width=True
             )
+        
+        with col2:
+            if rfq_sheet_url:
+                default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
+                
+                if st.button("☁️ Upload to Google Sheet", use_container_width=True):
+                    progress = st.progress(0)
+                    status = st.empty()
+                    
+                    def update_progress(done, total, batch):
+                        progress.progress(done / total)
+                        status.text(f"Uploading {done}/{total}...")
+                    
+                    ok, msg = upload_to_rfq_sheet(res_df, sheet_name, progress_callback=update_progress)
+                    progress.progress(1.0)
+                    status.empty()
+                    
+                    if ok:
+                        st.success(msg)
+                        st.link_button("🔗 Open Sheet", rfq_sheet_url)
+                    else:
+                        st.error(msg)
+        
+        # Navigation
+        st.markdown("---")
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            if st.button("⬅️ Back to Distances", use_container_width=True):
+                st.session_state.bulk_results_stale = True
+                st.session_state.bulk_wizard_step = 2
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Start New Bulk Lookup", type="secondary", use_container_width=True):
+                reset_wizard()
+                st.rerun()
     # ============================================
     # MASTER GRID GENERATOR
     # Generates pricing for all city-to-city combinations

@@ -3225,7 +3225,8 @@ with tab1:
                 else: st.warning("Report failed (GS not configured)")
 
 with tab2:
-    st.subheader("📦 Bulk Route Lookup")
+    # Centered Header
+    st.markdown("<h2 style='text-align: center;'>📦 Bulk Route Lookup</h2>", unsafe_allow_html=True)
     
     # ============================================
     # MULTI-STEP WIZARD FOR BULK LOOKUP
@@ -3251,26 +3252,23 @@ with tab2:
                 del st.session_state[key]
     
     # Show current step indicator
-    steps = ["📤 Upload", "🏙️ Cities", "📏 Distances", "💰 Pricing"]
+    # UPDATED: Renamed steps and centered layout
+    steps = ["Step 1: Upload", "Step 2: Cities", "Step 3: Distances", "Step 4: Pricing"]
     current_step = st.session_state.bulk_wizard_step
     
-    # Compact progress indicator in a single row
-    step_cols = st.columns(len(steps) + 2)  # Extra cols for reset button
-    for i, (col, step_name) in enumerate(zip(step_cols[:len(steps)], steps)):
-        with col:
-            if i < current_step:
-                st.markdown(f"<div style='text-align:center;color:#28a745;font-weight:bold;'>✅ {step_name}</div>", unsafe_allow_html=True)
-            elif i == current_step:
-                st.markdown(f"<div style='text-align:center;color:#007bff;font-weight:bold;'>➡️ {step_name}</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div style='text-align:center;color:#6c757d;'>⬜ {step_name}</div>", unsafe_allow_html=True)
+    # Progress indicator - Centered using spacer columns
+    _, c_prog, _ = st.columns([1, 10, 1])
     
-    # Reset button in the last column
-    with step_cols[-1]:
-        if current_step > 0:
-            if st.button("🔄 Reset", key="wizard_reset_top", use_container_width=True):
-                reset_wizard()
-                st.rerun()
+    with c_prog:
+        cols = st.columns(len(steps))
+        for i, (col, step_name) in enumerate(zip(cols, steps)):
+            with col:
+                if i < current_step:
+                    st.success(f"✅ {step_name}")
+                elif i == current_step:
+                    st.info(f"➡️ {step_name}")
+                else:
+                    st.caption(f"⬜ {step_name}")
     
     st.markdown("---")
     

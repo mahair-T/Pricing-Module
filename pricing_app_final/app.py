@@ -4222,29 +4222,30 @@ with tab2:
                     st.error(message)
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
-# --- TAB 3: MAP EXPLORER (STABILIZED) ---
 with tab3:
     st.subheader("🗺️ Live Distance Calculator (OSM)")
 
-    # 1. HELPER: State Manager to force updates
-    def update_pin_state(pin_id, lat, lon, name=None):
-        """Updates the pin coordinates and FORCES the widgets to refresh."""
-        # 1. Update the Source of Truth
-        st.session_state[f'{pin_id}_lat'] = lat
-        st.session_state[f'{pin_id}_lon'] = lon
-        if name: st.session_state[f'{pin_id}_name'] = name
+    # 1. HELPER: The "Nuclear Option" to force-update widgets
+    def set_pin(prefix, lat, lon, name=None):
+        """
+        Updates the session variable AND deletes the widget key.
+        This forces the input box to re-load with the new value.
+        """
+        # Update the Source of Truth
+        st.session_state[f'{prefix}_lat'] = lat
+        st.session_state[f'{prefix}_lon'] = lon
+        if name: st.session_state[f'{prefix}_name'] = name
         
-        # 2. NUCLEAR OPTION: Delete the widget keys to force them to reload from the new values
-        # This fixes the "reverting" bug
-        if f'widget_{pin_id}_lat' in st.session_state: del st.session_state[f'widget_{pin_id}_lat']
-        if f'widget_{pin_id}_lon' in st.session_state: del st.session_state[f'widget_{pin_id}_lon']
+        # DELETE the widget state so it doesn't "remember" the old value
+        if f'widget_{prefix}_lat' in st.session_state: del st.session_state[f'widget_{prefix}_lat']
+        if f'widget_{prefix}_lon' in st.session_state: del st.session_state[f'widget_{prefix}_lon']
         
-        # 3. Reset Route & Map View
+        # Reset Route & Map View
         st.session_state.route_geom = None
         st.session_state.map_center = [lat, lon]
         st.session_state.map_zoom = 12
 
-    # 2. Initialize Defaults (Only runs once)
+    # 2. Initialize Defaults
     if 'p1_lat' not in st.session_state:
         st.session_state.p1_lat = 24.7136
         st.session_state.p1_lon = 46.6753
@@ -4267,21 +4268,23 @@ with tab3:
         
         # --- ORIGIN CONTROLS ---
         st.markdown("#### 🟢 Origin")
+        # SEARCH LOGIC
         search_1 = st.text_input("Search Origin", key="s1", placeholder="City or District...")
-        if st.button("Find Origin"):
+        if st.button("Find Origin", key="btn_find_p1"):
             with st.spinner("Searching..."):
                 res = search_osm(search_1)
                 if res:
-                    update_pin_state('p1', res[0], res[1], res[2])
+                    set_pin('p1', res[0], res[1], res[2]) # <--- Forces update
                     st.rerun()
                 else: st.error("Not found")
         
+        # MANUAL INPUTS
         c1, c2 = st.columns(2)
-        # Note: We use unique keys 'widget_p1_lat' to avoid conflict
+        # Note: We use 'value' from session state, but 'key' is unique
         new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key="widget_p1_lat")
         new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key="widget_p1_lon")
         
-        # Manual Edit Detection: If user types in box, update state
+        # Detect Manual Typing
         if new_p1_lat != st.session_state.p1_lat or new_p1_lon != st.session_state.p1_lon:
             st.session_state.p1_lat = new_p1_lat
             st.session_state.p1_lon = new_p1_lon
@@ -4292,20 +4295,22 @@ with tab3:
 
         # --- DESTINATION CONTROLS ---
         st.markdown("#### 🔴 Destination")
+        # SEARCH LOGIC
         search_2 = st.text_input("Search Destination", key="s2", placeholder="City or District...")
-        if st.button("Find Destination"):
+        if st.button("Find Destination", key="btn_find_p2"):
             with st.spinner("Searching..."):
                 res = search_osm(search_2)
                 if res:
-                    update_pin_state('p2', res[0], res[1], res[2])
+                    set_pin('p2', res[0], res[1], res[2]) # <--- Forces update
                     st.rerun()
                 else: st.error("Not found")
 
+        # MANUAL INPUTS
         c3, c4 = st.columns(2)
         new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key="widget_p2_lat")
         new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key="widget_p2_lon")
 
-        # Manual Edit Detection
+        # Detect Manual Typing
         if new_p2_lat != st.session_state.p2_lat or new_p2_lon != st.session_state.p2_lon:
             st.session_state.p2_lat = new_p2_lat
             st.session_state.p2_lon = new_p2_lon
@@ -4314,7 +4319,7 @@ with tab3:
 
         st.markdown("---")
         
-        # --- CALCULATION (Auto-run if needed) ---
+        # --- CALCULATION ---
         if st.session_state.p1_lat and st.session_state.p2_lat:
             if st.session_state.route_geom is None:
                 with st.spinner("Calculating route..."):
@@ -4345,7 +4350,7 @@ with tab3:
 
         st_data = st_folium(m, width="100%", height=600, returned_objects=["last_clicked"])
         
-        # --- ROBUST CLICK HANDLER ---
+        # --- MAP CLICK HANDLER ---
         if st_data and st_data.get('last_clicked'):
             lat = st_data['last_clicked']['lat']
             lon = st_data['last_clicked']['lng']
@@ -4353,14 +4358,14 @@ with tab3:
             changed = False
             
             if "Set Origin" in click_mode:
-                # Check if actually changed to prevent loops
+                # Check for tiny difference to avoid infinite reload loop
                 if abs(lat - st.session_state.p1_lat) > 0.00001:
-                    update_pin_state('p1', lat, lon) # <--- Calls the helper to clear widgets!
+                    set_pin('p1', lat, lon) # <--- Forces update
                     changed = True
 
             elif "Set Destination" in click_mode:
                 if abs(lat - st.session_state.p2_lat) > 0.00001:
-                    update_pin_state('p2', lat, lon) # <--- Calls the helper to clear widgets!
+                    set_pin('p2', lat, lon) # <--- Forces update
                     changed = True
             
             if changed:

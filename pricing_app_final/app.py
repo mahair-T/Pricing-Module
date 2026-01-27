@@ -1647,28 +1647,51 @@ def search_osm(query):
     except: return None
     return None
 
+def decode_polyline(polyline_str):
+    """Decodes a Polyline string into a list of lat/lon pairs."""
+    index, lat, lng = 0, 0, 0
+    coordinates = []
+    changes = {'latitude': 0, 'longitude': 0}
+    length = len(polyline_str)
+
+    while index < length:
+        for unit in ['latitude', 'longitude']:
+            shift, result = 0, 0
+            while True:
+                byte = ord(polyline_str[index]) - 63
+                index += 1
+                result |= (byte & 0x1f) << shift
+                shift += 5
+                if not byte >= 0x20: break
+            if (result & 1): changes[unit] = ~(result >> 1)
+            else: changes[unit] = (result >> 1)
+        lat += changes['latitude']
+        lng += changes['longitude']
+        coordinates.append((lat / 100000.0, lng / 100000.0))
+    return coordinates
+
 def get_osrm_route(start_coords, end_coords):
     """
-    Calculate driving distance using OSRM (Open Source Routing Machine).
-    Expects coords as [lat, lon].
-    Returns distance_km or None.
+    Calculate driving distance AND route geometry.
+    Returns (distance_km, route_coordinates_list) or (None, None).
     """
-    # OSRM URL format: /route/v1/driving/{lon},{lat};{lon},{lat}
-    # Note: OSRM uses Longitude, Latitude order
+    # Request 'overview=full' to get the detailed road geometry
     url = f"http://router.project-osrm.org/route/v1/driving/{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
-    params = {'overview': 'false'} # We only need distance, not the geometry for now
+    params = {'overview': 'full', 'geometries': 'polyline'}
     
     try:
         r = requests.get(url, params=params, timeout=5)
         if r.status_code == 200:
             data = r.json()
             if data.get('code') == 'Ok' and data.get('routes'):
-                # Distance is in meters
-                dist_meters = data['routes'][0]['distance']
-                return dist_meters / 1000.0
-    except: return None
-    return None
-
+                route = data['routes'][0]
+                dist_km = route['distance'] / 1000.0
+                # Decode the encoded geometry string into points
+                geometry = decode_polyline(route['geometry'])
+                return dist_km, geometry
+    except: return None, None
+    return None, None
+    
 def normalize_city(city_raw):
     """
     Normalize city name to standard Arabic canonical form.
@@ -4199,115 +4222,153 @@ with tab2:
                     st.error(message)
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
+# --- TAB 3: MAP EXPLORER (INTERACTIVE ROUTING) ---
 with tab3:
     st.subheader("🗺️ Live Distance Calculator (OSM)")
     
-    # 1. Initialize State Variables
+    # 1. Initialize Session State for Coordinates
+    # We store these as specific keys so manual edits and map clicks can both update them
+    if 'p1_lat' not in st.session_state: st.session_state.p1_lat = 24.7136
+    if 'p1_lon' not in st.session_state: st.session_state.p1_lon = 46.6753
+    if 'p1_name' not in st.session_state: st.session_state.p1_name = "Riyadh"
+    
+    if 'p2_lat' not in st.session_state: st.session_state.p2_lat = 21.5433
+    if 'p2_lon' not in st.session_state: st.session_state.p2_lon = 39.1728
+    if 'p2_name' not in st.session_state: st.session_state.p2_name = "Jeddah"
+    
     if 'map_center' not in st.session_state: st.session_state.map_center = [24.7136, 46.6753]
     if 'map_zoom' not in st.session_state: st.session_state.map_zoom = 6
-    # Pins: [Lat, Lon, Name]
-    if 'pin_1' not in st.session_state: st.session_state.pin_1 = None
-    if 'pin_2' not in st.session_state: st.session_state.pin_2 = None
-    
-    # Layout: Controls on Left, Map on Right
+    if 'route_geom' not in st.session_state: st.session_state.route_geom = None
+
     col_ctrl, col_map = st.columns([1, 2])
     
     with col_ctrl:
-        st.markdown("### 📍 Set Locations")
-        st.info("💡 **Tip:** Use the search bars below OR select a 'Click Mode' and click directly on the map.")
+        st.markdown("### 📍 Location Adjustment")
         
-        # --- PIN 1 (ORIGIN) ---
-        st.markdown("#### 🟢 Origin (Pin 1)")
-        search_1 = st.text_input("Search Location 1", key="search_1_box", placeholder="e.g. Jeddah Port")
-        if st.button("Search Origin"):
+        # --- ORIGIN CONTROLS ---
+        st.markdown("#### 🟢 Origin")
+        search_1 = st.text_input("Search Origin", key="s1", placeholder="City or District...")
+        if st.button("Find Origin"):
             res = search_osm(search_1)
             if res:
-                st.session_state.pin_1 = {'loc': [res[0], res[1]], 'name': res[2].split(',')[0]}
+                st.session_state.p1_lat, st.session_state.p1_lon, st.session_state.p1_name = res
                 st.session_state.map_center = [res[0], res[1]]
-                st.session_state.map_zoom = 10
-            else: st.error("Location 1 not found")
+                st.session_state.map_zoom = 12
+                st.session_state.route_geom = None # Clear old route
+                st.rerun()
+            else: st.error("Not found")
             
-        if st.session_state.pin_1:
-            st.success(f"Selected: **{st.session_state.pin_1['name']}**")
-            st.caption(f"{st.session_state.pin_1['loc'][0]:.4f}, {st.session_state.pin_1['loc'][1]:.4f}")
+        # Manual Lat/Lon Adjustment
+        c1, c2 = st.columns(2)
+        new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key="num_p1_lat")
+        new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key="num_p1_lon")
+        
+        # Detect manual changes
+        if new_p1_lat != st.session_state.p1_lat or new_p1_lon != st.session_state.p1_lon:
+            st.session_state.p1_lat = new_p1_lat
+            st.session_state.p1_lon = new_p1_lon
+            st.session_state.route_geom = None
+            st.rerun()
 
         st.markdown("---")
 
-        # --- PIN 2 (DESTINATION) ---
-        st.markdown("#### 🔴 Destination (Pin 2)")
-        search_2 = st.text_input("Search Location 2", key="search_2_box", placeholder="e.g. Riyadh Industrial")
-        if st.button("Search Destination"):
+        # --- DESTINATION CONTROLS ---
+        st.markdown("#### 🔴 Destination")
+        search_2 = st.text_input("Search Destination", key="s2", placeholder="City or District...")
+        if st.button("Find Destination"):
             res = search_osm(search_2)
             if res:
-                st.session_state.pin_2 = {'loc': [res[0], res[1]], 'name': res[2].split(',')[0]}
+                st.session_state.p2_lat, st.session_state.p2_lon, st.session_state.p2_name = res
                 st.session_state.map_center = [res[0], res[1]]
-                st.session_state.map_zoom = 10
-            else: st.error("Location 2 not found")
-            
-        if st.session_state.pin_2:
-            st.success(f"Selected: **{st.session_state.pin_2['name']}**")
-            st.caption(f"{st.session_state.pin_2['loc'][0]:.4f}, {st.session_state.pin_2['loc'][1]:.4f}")
+                st.session_state.map_zoom = 12
+                st.session_state.route_geom = None
+                st.rerun()
+            else: st.error("Not found")
+
+        # Manual Lat/Lon Adjustment
+        c3, c4 = st.columns(2)
+        new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key="num_p2_lat")
+        new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key="num_p2_lon")
+
+        # Detect manual changes
+        if new_p2_lat != st.session_state.p2_lat or new_p2_lon != st.session_state.p2_lon:
+            st.session_state.p2_lat = new_p2_lat
+            st.session_state.p2_lon = new_p2_lon
+            st.session_state.route_geom = None
+            st.rerun()
 
         st.markdown("---")
         
         # --- CALCULATION ---
-        if st.session_state.pin_1 and st.session_state.pin_2:
-            dist_km = get_osrm_route(st.session_state.pin_1['loc'], st.session_state.pin_2['loc'])
-            if dist_km:
-                st.metric("🚗 Driving Distance", f"{dist_km:,.1f} km")
-                st.caption("Source: OpenStreetMap (OSRM)")
+        # Only calculate if coordinates are valid (non-zero)
+        if st.session_state.p1_lat and st.session_state.p2_lat:
+            # Check if route geometry needs updating
+            if st.session_state.route_geom is None:
+                with st.spinner("Calculating route..."):
+                    dist_km, geometry = get_osrm_route(
+                        [st.session_state.p1_lat, st.session_state.p1_lon],
+                        [st.session_state.p2_lat, st.session_state.p2_lon]
+                    )
+                    if dist_km:
+                        st.session_state.dist_display = dist_km
+                        st.session_state.route_geom = geometry
+                    else:
+                        st.session_state.dist_display = 0
+                        st.session_state.route_geom = []
+            
+            if st.session_state.get('dist_display', 0) > 0:
+                st.metric("🚗 Driving Distance", f"{st.session_state.dist_display:,.1f} km")
+                st.caption("Route: OSRM (Road Network)")
             else:
-                st.warning("Could not calculate route (is it drivable?)")
+                st.warning("No drivable route found.")
 
     with col_map:
         # Click Mode Selection
-        click_mode = st.radio("🖱️ Map Click Action:", ["Do Nothing", "Set Pin 1 (Origin)", "Set Pin 2 (Dest)"], horizontal=True)
+        click_mode = st.radio("🖱️ Map Click Action:", ["Do Nothing", "Set Origin (Green)", "Set Destination (Red)"], horizontal=True)
         
-        # Draw Map
         m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles="CartoDB positron")
         
-        # Draw Pin 1
-        if st.session_state.pin_1:
-            folium.Marker(
-                st.session_state.pin_1['loc'],
-                tooltip="Origin",
-                popup=st.session_state.pin_1['name'],
-                icon=folium.Icon(color="green", icon="play"),
-                draggable=False # Dragging not supported well in Streamlit loops
-            ).add_to(m)
+        # Draw Origin Pin
+        folium.Marker(
+            [st.session_state.p1_lat, st.session_state.p1_lon],
+            tooltip="Origin",
+            icon=folium.Icon(color="green", icon="play")
+        ).add_to(m)
             
-        # Draw Pin 2
-        if st.session_state.pin_2:
-            folium.Marker(
-                st.session_state.pin_2['loc'],
-                tooltip="Destination",
-                popup=st.session_state.pin_2['name'],
-                icon=folium.Icon(color="red", icon="stop"),
-                draggable=False
-            ).add_to(m)
+        # Draw Dest Pin
+        folium.Marker(
+            [st.session_state.p2_lat, st.session_state.p2_lon],
+            tooltip="Destination",
+            icon=folium.Icon(color="red", icon="stop")
+        ).add_to(m)
 
-        # Draw Line if both exist
-        if st.session_state.pin_1 and st.session_state.pin_2:
+        # Draw Route Polyline
+        if st.session_state.route_geom:
             folium.PolyLine(
-                [st.session_state.pin_1['loc'], st.session_state.pin_2['loc']],
-                color="blue", weight=3, opacity=0.7, dash_array='10'
+                st.session_state.route_geom,
+                color="blue", weight=4, opacity=0.7
             ).add_to(m)
-            # Auto-fit bounds
-            m.fit_bounds([st.session_state.pin_1['loc'], st.session_state.pin_2['loc']], padding=(50, 50))
+            # Fit bounds to show route
+            m.fit_bounds([
+                [st.session_state.p1_lat, st.session_state.p1_lon],
+                [st.session_state.p2_lat, st.session_state.p2_lon]
+            ], padding=(50, 50))
 
-        # Render Map & Capture Click
+        # Handle Interaction
         st_data = st_folium(m, width="100%", height=600)
         
-        # Handle Map Clicks
         if st_data['last_clicked']:
             lat, lon = st_data['last_clicked']['lat'], st_data['last_clicked']['lng']
             
-            # Logic to update pins based on click mode
-            if click_mode == "Set Pin 1 (Origin)":
-                st.session_state.pin_1 = {'loc': [lat, lon], 'name': 'Pinned Location'}
-                st.rerun() # Refresh to update UI immediately
-            elif click_mode == "Set Pin 2 (Dest)":
-                st.session_state.pin_2 = {'loc': [lat, lon], 'name': 'Pinned Location'}
+            if "Set Origin" in click_mode:
+                st.session_state.p1_lat = lat
+                st.session_state.p1_lon = lon
+                st.session_state.route_geom = None # Invalidate route to force recalc
+                st.rerun()
+            elif "Set Destination" in click_mode:
+                st.session_state.p2_lat = lat
+                st.session_state.p2_lon = lon
+                st.session_state.route_geom = None # Invalidate route to force recalc
                 st.rerun()
                 
 # ERROR LOG SECTION (Restored to exact snippet)

@@ -3498,6 +3498,9 @@ with tab2:
     # ============================================
     # STEP 1: City Resolution
     # ============================================
+    # ============================================
+    # STEP 1: City Resolution
+    # ============================================
     elif current_step == 1:
         st.markdown("<h3 style='text-align: center;'>Step 2: Resolve Unmatched Cities</h3>", unsafe_allow_html=True)
         
@@ -3720,32 +3723,74 @@ with tab2:
                                 }
                                 st.rerun()
         
-        # 5. NAVIGATION
+        # 5. NAVIGATION WITH ADMIN ACTIONS
         st.markdown("---")
-        c_back, c_ignore, c_cont = st.columns([1, 1, 1])
+        # UPDATED: 4 Columns for Back | Admin Auto | Ignore No-Match | Continue
+        c_back, c_auto, c_ignore, c_cont = st.columns([1, 1, 1, 1])
         
         with c_back:
-            if st.button("⬅️ Back to Upload", use_container_width=True):
+            if st.button("⬅️ Back", use_container_width=True):
                 st.session_state.bulk_wizard_step = 0
                 st.rerun()
 
+        with c_auto:
+            # NEW: Admin Auto-Resolve Button
+            matchable_count = pending_google + pending_fuzzy
+            if matchable_count > 0:
+                if st.button(f"⚡ Admin Auto-Resolve", use_container_width=True, help=f"Instantly accept {pending_google} Google matches and {pending_fuzzy} Fuzzy matches"):
+                    accepted_count = 0
+                    for city_name in unmatched.keys():
+                        if city_name in st.session_state.city_resolutions:
+                            continue
+                            
+                        # Check Google First
+                        google_res = google_suggestions.get(city_name, {})
+                        if google_res.get('success'):
+                            prov, reg = get_province_from_coordinates(google_res['latitude'], google_res['longitude'])
+                            if not prov: reg = "Central"
+                            
+                            st.session_state.city_resolutions[city_name] = {
+                                'type': 'google_match',
+                                'canonical': google_res['matched_name'],
+                                'latitude': google_res['latitude'],
+                                'longitude': google_res['longitude'],
+                                'province': prov,
+                                'region': reg,
+                                'original_input': city_name
+                            }
+                            accepted_count += 1
+                            continue
+                            
+                        # Check Fuzzy Second
+                        fuzzy = fuzzy_results.get(city_name, {})
+                        if fuzzy.get('match_found'):
+                            st.session_state.city_resolutions[city_name] = {
+                                'type': 'fuzzy_match',
+                                'canonical': fuzzy.get('suggested_canonical'),
+                                'confidence': fuzzy.get('confidence'),
+                                'english': to_english_city(fuzzy.get('suggested_canonical'))
+                            }
+                            accepted_count += 1
+                    
+                    st.toast(f"✅ Auto-resolved {accepted_count} cities!", icon="⚡")
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                 st.button("⚡ Admin Auto-Resolve", use_container_width=True, disabled=True)
+
         with c_ignore:
-            # UPDATED IGNORE LOGIC: Only ignore cities with NO matches (Google/Fuzzy)
-            # pending_none is calculated above in step 2
-            
+            # "Ignore No-Matches" logic (Smart Ignore)
             if pending_none > 0:
                 if st.button(f"🗑️ Ignore {pending_none} No-Matches", use_container_width=True, help="Ignore only cities with NO Google or Fuzzy matches"):
                     count_ignored = 0
                     for city in unmatched.keys():
-                        # Skip if already resolved
                         if city in st.session_state.city_resolutions:
                             continue
                         
-                        # Check match status again
                         has_google = google_suggestions.get(city, {}).get('success', False)
                         has_fuzzy = fuzzy_results.get(city, {}).get('match_found', False)
                         
-                        # Only ignore if NO suggestions exist
                         if not has_google and not has_fuzzy:
                             st.session_state.city_resolutions[city] = {
                                 'type': 'ignored',
@@ -3762,7 +3807,7 @@ with tab2:
         
         with c_cont:
             can_proceed = resolved_count >= total_count
-            btn_text = "Apply & Continue ▶️" if can_proceed else "Resolve All to Continue 🚫"
+            btn_text = "Continue ▶️" if can_proceed else "Resolve All 🚫"
             
             if st.button(btn_text, type="primary", use_container_width=True, disabled=not can_proceed):
                 if not can_proceed:

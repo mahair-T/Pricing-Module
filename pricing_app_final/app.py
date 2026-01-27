@@ -4222,25 +4222,44 @@ with tab2:
                     st.error(message)
 
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
+# --- TAB 3: MAP EXPLORER (STABILIZED) ---
 with tab3:
     st.subheader("🗺️ Live Distance Calculator (OSM)")
-    
-    # 1. Initialize Session State (One-time setup)
-    if 'p1_lat' not in st.session_state: 
+
+    # 1. HELPER: State Manager to force updates
+    def update_pin_state(pin_id, lat, lon, name=None):
+        """Updates the pin coordinates and FORCES the widgets to refresh."""
+        # 1. Update the Source of Truth
+        st.session_state[f'{pin_id}_lat'] = lat
+        st.session_state[f'{pin_id}_lon'] = lon
+        if name: st.session_state[f'{pin_id}_name'] = name
+        
+        # 2. NUCLEAR OPTION: Delete the widget keys to force them to reload from the new values
+        # This fixes the "reverting" bug
+        if f'widget_{pin_id}_lat' in st.session_state: del st.session_state[f'widget_{pin_id}_lat']
+        if f'widget_{pin_id}_lon' in st.session_state: del st.session_state[f'widget_{pin_id}_lon']
+        
+        # 3. Reset Route & Map View
+        st.session_state.route_geom = None
+        st.session_state.map_center = [lat, lon]
+        st.session_state.map_zoom = 12
+
+    # 2. Initialize Defaults (Only runs once)
+    if 'p1_lat' not in st.session_state:
         st.session_state.p1_lat = 24.7136
         st.session_state.p1_lon = 46.6753
         st.session_state.p1_name = "Riyadh"
     
-    if 'p2_lat' not in st.session_state: 
+    if 'p2_lat' not in st.session_state:
         st.session_state.p2_lat = 21.5433
         st.session_state.p2_lon = 39.1728
         st.session_state.p2_name = "Jeddah"
-    
+
     if 'map_center' not in st.session_state: st.session_state.map_center = [24.7136, 46.6753]
     if 'map_zoom' not in st.session_state: st.session_state.map_zoom = 6
     if 'route_geom' not in st.session_state: st.session_state.route_geom = None
+    if 'dist_display' not in st.session_state: st.session_state.dist_display = 0
 
-    # Define layout
     col_ctrl, col_map = st.columns([1, 2])
     
     with col_ctrl:
@@ -4249,32 +4268,20 @@ with tab3:
         # --- ORIGIN CONTROLS ---
         st.markdown("#### 🟢 Origin")
         search_1 = st.text_input("Search Origin", key="s1", placeholder="City or District...")
-        
         if st.button("Find Origin"):
             with st.spinner("Searching..."):
                 res = search_osm(search_1)
                 if res:
-                    lat, lon, name = res
-                    st.session_state.p1_lat = lat
-                    st.session_state.p1_lon = lon
-                    st.session_state.p1_name = name
-                    # Clean widgets to force refresh
-                    if 'num_p1_lat' in st.session_state: del st.session_state.num_p1_lat
-                    if 'num_p1_lon' in st.session_state: del st.session_state.num_p1_lon
-                    
-                    st.session_state.map_center = [lat, lon]
-                    st.session_state.map_zoom = 12
-                    st.session_state.route_geom = None
+                    update_pin_state('p1', res[0], res[1], res[2])
                     st.rerun()
                 else: st.error("Not found")
         
-        # Manual Inputs (Bound to State)
         c1, c2 = st.columns(2)
-        # We check if widget key exists; if not, it defaults to session value
-        new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key="num_p1_lat")
-        new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key="num_p1_lon")
+        # Note: We use unique keys 'widget_p1_lat' to avoid conflict
+        new_p1_lat = c1.number_input("Lat", value=st.session_state.p1_lat, format="%.5f", key="widget_p1_lat")
+        new_p1_lon = c2.number_input("Lon", value=st.session_state.p1_lon, format="%.5f", key="widget_p1_lon")
         
-        # Immediate Update Check
+        # Manual Edit Detection: If user types in box, update state
         if new_p1_lat != st.session_state.p1_lat or new_p1_lon != st.session_state.p1_lon:
             st.session_state.p1_lat = new_p1_lat
             st.session_state.p1_lon = new_p1_lon
@@ -4286,31 +4293,19 @@ with tab3:
         # --- DESTINATION CONTROLS ---
         st.markdown("#### 🔴 Destination")
         search_2 = st.text_input("Search Destination", key="s2", placeholder="City or District...")
-        
         if st.button("Find Destination"):
             with st.spinner("Searching..."):
                 res = search_osm(search_2)
                 if res:
-                    lat, lon, name = res
-                    st.session_state.p2_lat = lat
-                    st.session_state.p2_lon = lon
-                    st.session_state.p2_name = name
-                    # Clean widgets
-                    if 'num_p2_lat' in st.session_state: del st.session_state.num_p2_lat
-                    if 'num_p2_lon' in st.session_state: del st.session_state.num_p2_lon
-                    
-                    st.session_state.map_center = [lat, lon]
-                    st.session_state.map_zoom = 12
-                    st.session_state.route_geom = None
+                    update_pin_state('p2', res[0], res[1], res[2])
                     st.rerun()
                 else: st.error("Not found")
 
-        # Manual Inputs (Bound to State)
         c3, c4 = st.columns(2)
-        new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key="num_p2_lat")
-        new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key="num_p2_lon")
+        new_p2_lat = c3.number_input("Lat", value=st.session_state.p2_lat, format="%.5f", key="widget_p2_lat")
+        new_p2_lon = c4.number_input("Lon", value=st.session_state.p2_lon, format="%.5f", key="widget_p2_lon")
 
-        # Immediate Update Check
+        # Manual Edit Detection
         if new_p2_lat != st.session_state.p2_lat or new_p2_lon != st.session_state.p2_lon:
             st.session_state.p2_lat = new_p2_lat
             st.session_state.p2_lon = new_p2_lon
@@ -4319,9 +4314,7 @@ with tab3:
 
         st.markdown("---")
         
-        # --- CALCULATION ---
-        # Logic: If geometry is missing but points exist, fetch it.
-        # This runs passively on every script re-run if needed.
+        # --- CALCULATION (Auto-run if needed) ---
         if st.session_state.p1_lat and st.session_state.p2_lat:
             if st.session_state.route_geom is None:
                 with st.spinner("Calculating route..."):
@@ -4334,16 +4327,15 @@ with tab3:
             
             if st.session_state.get('dist_display'):
                 st.metric("🚗 Driving Distance", f"{st.session_state.dist_display:,.1f} km")
+                st.caption("Route: OSRM (Road Network)")
             else:
                 st.warning("No drivable route found.")
 
     with col_map:
-        # Move Click Mode above map
         click_mode = st.radio("🖱️ Map Click Action:", ["Do Nothing", "Set Origin (Green)", "Set Destination (Red)"], horizontal=True)
         
         m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles="CartoDB positron")
         
-        # Draw Pins using SESSION STATE variables
         folium.Marker([st.session_state.p1_lat, st.session_state.p1_lon], tooltip="Origin", icon=folium.Icon(color="green", icon="play")).add_to(m)
         folium.Marker([st.session_state.p2_lat, st.session_state.p2_lon], tooltip="Destination", icon=folium.Icon(color="red", icon="stop")).add_to(m)
 
@@ -4351,7 +4343,6 @@ with tab3:
             folium.PolyLine(st.session_state.route_geom, color="blue", weight=4, opacity=0.7).add_to(m)
             m.fit_bounds([[st.session_state.p1_lat, st.session_state.p1_lon], [st.session_state.p2_lat, st.session_state.p2_lon]], padding=(50, 50))
 
-        # Get Click Data
         st_data = st_folium(m, width="100%", height=600, returned_objects=["last_clicked"])
         
         # --- ROBUST CLICK HANDLER ---
@@ -4362,24 +4353,14 @@ with tab3:
             changed = False
             
             if "Set Origin" in click_mode:
-                # Only update if it actually changed (prevents infinite reload loops)
-                if abs(lat - st.session_state.p1_lat) > 0.0001 or abs(lon - st.session_state.p1_lon) > 0.0001:
-                    st.session_state.p1_lat = lat
-                    st.session_state.p1_lon = lon
-                    # Delete widget to force UI refresh
-                    if 'num_p1_lat' in st.session_state: del st.session_state.num_p1_lat
-                    if 'num_p1_lon' in st.session_state: del st.session_state.num_p1_lon
-                    st.session_state.route_geom = None
+                # Check if actually changed to prevent loops
+                if abs(lat - st.session_state.p1_lat) > 0.00001:
+                    update_pin_state('p1', lat, lon) # <--- Calls the helper to clear widgets!
                     changed = True
 
             elif "Set Destination" in click_mode:
-                if abs(lat - st.session_state.p2_lat) > 0.0001 or abs(lon - st.session_state.p2_lon) > 0.0001:
-                    st.session_state.p2_lat = lat
-                    st.session_state.p2_lon = lon
-                    # Delete widget to force UI refresh
-                    if 'num_p2_lat' in st.session_state: del st.session_state.num_p2_lat
-                    if 'num_p2_lon' in st.session_state: del st.session_state.num_p2_lon
-                    st.session_state.route_geom = None
+                if abs(lat - st.session_state.p2_lat) > 0.00001:
+                    update_pin_state('p2', lat, lon) # <--- Calls the helper to clear widgets!
                     changed = True
             
             if changed:

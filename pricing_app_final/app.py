@@ -3166,6 +3166,18 @@ with tab2:
                                     if p_raw not in unmatched_cities:
                                         unmatched_cities[p_raw] = {'rows': [], 'col': 'Pickup'}
                                     unmatched_cities[p_raw]['rows'].append(i + 1)
+                                    
+                                # ==========================================
+                                # 👇 FIX 1 STARTS HERE (Log Pickup Error)
+                                # ==========================================
+                                log_exception('unmatched_city', {
+                                    'original_value': p_raw, 
+                                    'column': 'Pickup', 
+                                    'row_num': i + 1
+                                }, immediate=False)
+                                # ==========================================
+                                # 👆 FIX 1 ENDS HERE
+                                # ==========================================
                                 
                                 if not d_ok and d_raw:
                                     if d_raw not in unmatched_cities:
@@ -3197,12 +3209,15 @@ with tab2:
                                             row['pickup_ar'], row['dest_ar'], 
                                             immediate_log=False
                                         )
-                            # --- ⬇️ FIX STARTS HERE ⬇️ ---
+                            
+                            # ==========================================
+                            # 👇 FIX 2 STARTS HERE (Flush Logs to Sheets)
+                            # ==========================================
                             
                             # 1. Flush Missing Distances (MatchedDistances Sheet)
                             dist_flushed_ok, dist_flushed_count = flush_matched_distances_to_sheet()
                             
-                            # 2. Flush Error Log (ErrorLog Sheet) - THIS WAS MISSING
+                            # 2. Flush Error Log (ErrorLog Sheet)
                             err_flushed_ok, err_flushed_count = flush_error_log_to_sheet()
                             
                             # Feedback Logic
@@ -3210,16 +3225,18 @@ with tab2:
                             if dist_flushed_count > 0:
                                 msgs.append(f"✅ Logged {dist_flushed_count} missing distances")
                             if err_flushed_count > 0:
-                                msgs.append(f"⚠️ Logged {err_flushed_count} errors to log")
+                                msgs.append(f"⚠️ Logged {err_flushed_count} errors to sheet")
                                 
                             if msgs:
                                 st.session_state['last_distance_flush'] = " | ".join(msgs)
-                            elif not dist_flushed_ok:
-                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush distances"
+                            elif not dist_flushed_ok or not err_flushed_ok:
+                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush logs to sheets"
                             else:
-                                st.session_state['last_distance_flush'] = "ℹ️ No new issues detected"
+                                st.session_state['last_distance_flush'] = "ℹ️ No new issues to log"
                             
-                            # --- ⬆️ FIX ENDS HERE ⬆️ ---
+                            # ==========================================
+                            # 👆 FIX 2 ENDS HERE
+                            # ==========================================
                             
                             # Store in session state
                             st.session_state.bulk_wizard_data = {

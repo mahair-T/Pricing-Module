@@ -513,84 +513,8 @@ def log_to_append_sheet(variant, canonical, region, province=None, latitude=None
         st.session_state.append_sheet_pending.append(row_data)
         return True
 
-def flush_matched_distances_to_sheet():
-    """
-    Flush pending matched distances to Google Sheet.
-    Uses append_rows to automatically handle grid expansion.
-    """
-    if 'matched_distances_pending' not in st.session_state or len(st.session_state.matched_distances_pending) == 0:
-        return True, 0
-    
-    pending = st.session_state.matched_distances_pending
-    
-    try:
-        worksheet = get_matched_distances_sheet()
-        if not worksheet:
-            # Keep pending items, don't clear them
-            return False, 0
-        
-        # Get existing data to check for duplicates
-        # We only need columns B and C (Pickup/Dest AR) to check duplicates
-        existing = worksheet.get_all_values()
-        existing_pairs = set()
-        for row in existing[1:]:
-            if len(row) >= 3:
-                existing_pairs.add((row[1], row[2]))
-                existing_pairs.add((row[2], row[1]))  # Check both directions
-        
-        rows_to_add = []
-        
-        # Determine the next row number for the formula references
-        # Logic: Current rows + 1 (header) + 1 (next new row) + index in batch
-        start_row_index = len(existing) + 1 
-        
-        for i, item in enumerate(pending):
-            # Skip if already exists
-            if (item['pickup_ar'], item['dest_ar']) in existing_pairs:
-                continue
-            if (item['dest_ar'], item['pickup_ar']) in existing_pairs:
-                continue
-            
-            # Calculate the row number this specific entry will land on
-            current_row_num = start_row_index + len(rows_to_add)
-            
-            # Build formulas using the correct row number
-            formula = f'=GOOGLEMAPS_DISTANCE("{item["pickup_en"]}, Saudi Arabia", "{item["dest_en"]}, Saudi Arabia", "driving")'
-            value_ref = f'=IF(N(F{current_row_num})>0, F{current_row_num}, "")'
-            
-            row_data = [
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                item['pickup_ar'],
-                item['dest_ar'],
-                item['pickup_en'],
-                item['dest_en'],
-                formula,
-                value_ref,
-                'Pending',
-                'No'
-            ]
-            rows_to_add.append(row_data)
-            
-            # Add to local set so we don't add duplicates within the same batch
-            existing_pairs.add((item['pickup_ar'], item['dest_ar']))
-        
-        if rows_to_add:
-            # ✅ FIX: Use append_rows instead of update to avoid "Grid Limits" error
-            worksheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
-        
-        # Clear pending queue only on success
-        st.session_state.matched_distances_pending = []
-        return True, len(rows_to_add)
-    
-    except Exception as e:
-        # Log the specific error to session state for debugging
-        if 'flush_errors' not in st.session_state:
-            st.session_state.flush_errors = []
-        st.session_state.flush_errors.append(f"Flush Error: {str(e)}")
-        return False, 0
-
 def flush_matched_cities_to_sheet():
-    """Flush pending city matches to Google Sheet."""
+    """Flush pending city matches to Google Sheet with Grid Expansion."""
     if 'matched_cities_pending' not in st.session_state or len(st.session_state.matched_cities_pending) == 0:
         return True, 0
     
@@ -607,19 +531,21 @@ def flush_matched_cities_to_sheet():
                     item['added_to_csv'], item['user'], item['source']
                 ])
             if rows:
+                # ✅ FIX: Force-add rows to prevent "Grid Limits" error
+                worksheet.add_rows(len(rows))
                 worksheet.append_rows(rows)
+                
             st.session_state.matched_cities_pending = []
             return True, len(rows)
     except Exception as e:
-        # Log error to session for visibility
         if 'flush_errors' not in st.session_state:
             st.session_state.flush_errors = []
         st.session_state.flush_errors.append(f"City Flush Error: {str(e)}")
         pass
     return False, 0
-        
+
 def flush_append_sheet():
-    """Flush pending append entries to Google Sheet."""
+    """Flush pending append entries to Google Sheet with Grid Expansion."""
     if 'append_sheet_pending' not in st.session_state or len(st.session_state.append_sheet_pending) == 0:
         return True, 0
     
@@ -635,12 +561,88 @@ def flush_append_sheet():
                     item['source'], item['timestamp'], item['user'], item['added_to_csv']
                 ])
             if rows:
+                # ✅ FIX: Force-add rows to prevent "Grid Limits" error
+                worksheet.add_rows(len(rows))
                 worksheet.append_rows(rows)
+                
             st.session_state.append_sheet_pending = []
             return True, len(rows)
     except Exception as e:
+        if 'flush_errors' not in st.session_state:
+            st.session_state.flush_errors = []
+        st.session_state.flush_errors.append(f"Append Flush Error: {str(e)}")
         pass
     return False, 0
+
+def flush_matched_distances_to_sheet():
+    """
+    Flush pending matched distances to Google Sheet.
+    Includes explicit grid expansion to prevent 'exceeds grid limits' errors.
+    """
+    if 'matched_distances_pending' not in st.session_state or len(st.session_state.matched_distances_pending) == 0:
+        return True, 0
+    
+    pending = st.session_state.matched_distances_pending
+    
+    try:
+        worksheet = get_matched_distances_sheet()
+        if not worksheet:
+            return False, 0
+        
+        # Get existing data to check for duplicates
+        existing = worksheet.get_all_values()
+        existing_pairs = set()
+        for row in existing[1:]:
+            if len(row) >= 3:
+                existing_pairs.add((row[1], row[2]))
+                existing_pairs.add((row[2], row[1]))
+        
+        rows_to_add = []
+        start_row_index = len(existing) + 1 
+        
+        for i, item in enumerate(pending):
+            # Skip if already exists
+            if (item['pickup_ar'], item['dest_ar']) in existing_pairs:
+                continue
+            if (item['dest_ar'], item['pickup_ar']) in existing_pairs:
+                continue
+            
+            # Calculate the row number this specific entry will land on
+            current_row_num = start_row_index + len(rows_to_add)
+            
+            # Build formulas
+            formula = f'=GOOGLEMAPS_DISTANCE("{item["pickup_en"]}, Saudi Arabia", "{item["dest_en"]}, Saudi Arabia", "driving")'
+            value_ref = f'=IF(N(F{current_row_num})>0, F{current_row_num}, "")'
+            
+            row_data = [
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                item['pickup_ar'],
+                item['dest_ar'],
+                item['pickup_en'],
+                item['dest_en'],
+                formula,
+                value_ref,
+                'Pending',
+                'No'
+            ]
+            rows_to_add.append(row_data)
+            existing_pairs.add((item['pickup_ar'], item['dest_ar']))
+        
+        if rows_to_add:
+            # ✅ FIX: Force-add rows to prevent "Grid Limits" error
+            worksheet.add_rows(len(rows_to_add))
+            
+            # Now append the data safely
+            worksheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
+        
+        st.session_state.matched_distances_pending = []
+        return True, len(rows_to_add)
+    
+    except Exception as e:
+        if 'flush_errors' not in st.session_state:
+            st.session_state.flush_errors = []
+        st.session_state.flush_errors.append(f"Flush Error: {str(e)}")
+        return False, 0
 
 def update_city_normalization_pickle(new_entries):
     """
@@ -3553,11 +3555,25 @@ with tab2:
                             # Track rows to skip
                             for row_num in resolution.get('rows', []):
                                 ignored_rows.add(row_num)
+                                
+                                # 👇 FIX START: Get full row data to log Pickup/Dest
+                                # parsed_rows is 0-indexed, row_num is 1-indexed
+                                try:
+                                    row_data = wizard_data['parsed_rows'][row_num - 1]
+                                    p_val = row_data.get('pickup_raw', '')
+                                    d_val = row_data.get('dest_raw', '')
+                                except IndexError:
+                                    p_val = "Unknown"
+                                    d_val = "Unknown"
+                                
                                 log_exception('route_ignored', {
+                                    'pickup_city': p_val,       # ✅ Explicitly log Pickup
+                                    'destination_city': d_val,  # ✅ Explicitly log Destination
                                     'original_value': city_name,
                                     'action': 'Ignored by user',
                                     'row_num': row_num
                                 }, immediate=False)
+                                # 👆 FIX END
                                 
                         elif resolution['type'] == 'fuzzy_match':
                             # Log fuzzy match

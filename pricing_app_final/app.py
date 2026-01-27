@@ -3490,10 +3490,11 @@ with tab2:
                                     success, count_written, start_row = write_cities_for_geocoding(cities_needing_geocode)
                                     
                                     if success and count_written > 0:
-                                        # Wait for Google API to process (3-5 seconds)
+                                        # Wait for Google API to process
                                         import time
-                                        status_placeholder.info(f"⏳ Waiting for Google Maps API to process {count_written} cities...")
-                                        time.sleep(4)  # Wait 4 seconds for formulas to calculate
+                                        for remaining in range(10, 0, -1):
+                                            status_placeholder.info(f"⏳ Waiting for Google Maps API... {remaining}s")
+                                            time.sleep(1)
                                         
                                         # Read back results
                                         google_results = read_geocode_results(cities_needing_geocode)
@@ -3508,6 +3509,40 @@ with tab2:
                                             status_placeholder.warning("⚠️ Could not connect to Google Sheets for geocoding")
                                 else:
                                     st.session_state.bulk_wizard_data['google_suggestions'] = {}
+                                
+                                # ============================================
+                                # ORDER UNMATCHED CITIES FOR DISPLAY
+                                # Priority: 1) Google matches, 2) Fuzzy matches, 3) No matches
+                                # ============================================
+                                google_suggestions = st.session_state.bulk_wizard_data.get('google_suggestions', {})
+                                
+                                google_matched = {}
+                                fuzzy_matched = {}
+                                no_match = {}
+                                
+                                for city_name, info in unmatched_cities.items():
+                                    has_google = google_suggestions.get(city_name, {}).get('success', False)
+                                    has_fuzzy = fuzzy_results.get(city_name, {}).get('match_found', False)
+                                    
+                                    if has_google:
+                                        google_matched[city_name] = info
+                                    elif has_fuzzy:
+                                        fuzzy_matched[city_name] = info
+                                    else:
+                                        no_match[city_name] = info
+                                
+                                # Rebuild ordered dict
+                                ordered_unmatched = {}
+                                ordered_unmatched.update(google_matched)
+                                ordered_unmatched.update(fuzzy_matched)
+                                ordered_unmatched.update(no_match)
+                                
+                                st.session_state.bulk_wizard_data['unmatched_cities'] = ordered_unmatched
+                                st.session_state.bulk_wizard_data['match_counts'] = {
+                                    'google': len(google_matched),
+                                    'fuzzy': len(fuzzy_matched),
+                                    'none': len(no_match)
+                                }
                                 
                                 st.session_state.bulk_wizard_step = 1
                             else:
@@ -3542,6 +3577,8 @@ with tab2:
         wizard_data = st.session_state.bulk_wizard_data
         unmatched = wizard_data.get('unmatched_cities', {})
         fuzzy_results = wizard_data.get('fuzzy_results', {})
+        google_suggestions = wizard_data.get('google_suggestions', {})
+        match_counts = wizard_data.get('match_counts', {})
         username = wizard_data.get('username', '')
         
         if not unmatched:
@@ -3551,16 +3588,40 @@ with tab2:
         
         st.info(f"Found **{len(unmatched)}** unique unmatched city names across your routes.")
         
+        # Show match breakdown
+        if match_counts:
+            cols = st.columns(3)
+            with cols[0]:
+                st.metric("🌍 Google Matches", match_counts.get('google', 0))
+            with cols[1]:
+                st.metric("🔤 Fuzzy Matches", match_counts.get('fuzzy', 0))
+            with cols[2]:
+                st.metric("❌ No Matches", match_counts.get('none', 0))
+        
         # Initialize resolution state if not exists
         if 'city_resolutions' not in st.session_state:
             st.session_state.city_resolutions = {}
         
         # Build resolution table
         st.markdown("#### Review and resolve each city:")
-        st.caption("Accept the suggested match, provide coordinates for a new city, or ignore to skip these routes.")
+        st.caption("Cities are ordered: Google matches first, then fuzzy matches, then no matches.")
         
         for idx, (city_name, info) in enumerate(unmatched.items()):
-            with st.expander(f"🏙️ **{city_name}** (appears in {len(info['rows'])} rows)", expanded=True):
+            # Determine match type for this city
+            has_google = google_suggestions.get(city_name, {}).get('success', False)
+            has_fuzzy = fuzzy_results.get(city_name, {}).get('match_found', False)
+            
+            if has_google:
+                match_icon = "🌍"
+                match_label = "Google Match"
+            elif has_fuzzy:
+                match_icon = "🔤"
+                match_label = "Fuzzy Match"
+            else:
+                match_icon = "❌"
+                match_label = "No Match"
+            
+            with st.expander(f"{match_icon} **{city_name}** ({match_label} • {len(info['rows'])} rows)", expanded=(not has_google and not has_fuzzy)):
                 fuzzy = fuzzy_results.get(city_name, {})
                 
                 # Resolution action selector
@@ -4014,8 +4075,37 @@ with tab2:
             
             # Flush missing distances to MatchedDistances sheet
             flush_ok, flush_count = flush_matched_distances_to_sheet()
+            
+            # If we logged missing distances, wait for Google Maps API to process them
             if flush_count > 0:
-                st.session_state['step2_distance_flush'] = f"📏 Logged {flush_count} missing distances for Google Maps lookup"
+                import time
+                status_placeholder = st.empty()
+                
+                for remaining in range(10, 0, -1):
+                    status_placeholder.info(f"⏳ Waiting for Google Maps API to calculate {flush_count} distances... {remaining}s")
+                    time.sleep(1)
+                
+                # Read back newly-resolved distances
+                newly_resolved = get_resolved_distances_from_sheet()
+                newly_added = 0
+                
+                for item in newly_resolved:
+                    key = (item['pickup_ar'], item['dest_ar'])
+                    rev_key = (item['dest_ar'], item['pickup_ar'])
+                    if key not in DISTANCE_MATRIX:
+                        DISTANCE_MATRIX[key] = item['distance_km']
+                        DISTANCE_MATRIX[rev_key] = item['distance_km']
+                        newly_added += 1
+                        
+                        # Update city_pairs if this pair was missing
+                        if key in city_pairs and city_pairs[key]['distance'] == 0:
+                            city_pairs[key]['distance'] = item['distance_km']
+                            city_pairs[key]['source'] = 'Google Maps API'
+                
+                if newly_added > 0:
+                    status_placeholder.success(f"✅ Google Maps resolved {newly_added}/{flush_count} distances!")
+                else:
+                    status_placeholder.warning(f"⚠️ Google Maps API didn't return results yet. You can enter distances manually below.")
             
             st.session_state.bulk_wizard_data['distance_results'] = city_pairs
             

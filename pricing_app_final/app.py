@@ -4033,23 +4033,18 @@ with tab2:
         existing_distances = {k: v for k, v in distance_results.items() 
                             if v['distance'] > 0 and v['source'] != 'Missing'}
         
-        # UI: Dashboard Stats
-        st.markdown("""
-        <style>
-            .dist-box { border: 1px solid #e0e0e0; border-radius: 5px; padding: 10px; text-align: center; }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        c_stat1, c_stat2, c_refresh = st.columns([1, 1, 1])
+        # UI: Dashboard Stats - Centered
+        _, c_stat1, c_stat2, _ = st.columns([1, 1, 1, 1])
         
         with c_stat1:
             st.metric("⚠️ Missing Distances", len(missing_distances))
         
         with c_stat2:
             st.metric("✅ Ready to Price", len(existing_distances))
-            
+        
+        # Refresh button centered below
+        _, c_refresh, _ = st.columns([1, 1, 1])
         with c_refresh:
-            st.markdown("<br>", unsafe_allow_html=True)  # Align with metrics
             if st.button("🔄 Refresh from Sheets", use_container_width=True, help="Re-check Google Sheets for newly resolved distances"):
                 # Clear distance results to force re-check
                 if 'distance_results' in st.session_state.bulk_wizard_data:

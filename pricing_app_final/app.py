@@ -4108,9 +4108,6 @@ with tab2:
         # FIX END
         # =========================================================
         
-        elif step2_continue and proceed_disabled:
-            st.error("⚠️ Please resolve all missing distances before proceeding")
-    
     # ============================================
     # STEP 3: Final Pricing
     # ============================================

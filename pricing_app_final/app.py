@@ -621,75 +621,6 @@ def update_city_normalization_pickle(new_entries):
         FUZZY_VARIANTS_LIST = get_all_variants_for_fuzzy_matching()
     
     return True, added_count
-    """
-    Log a missing distance to the MatchedDistances sheet for Google Maps lookup.
-    Only logs if this city pair isn't already in the sheet or pending queue.
-    
-    Args:
-        pickup_ar, dest_ar: Arabic city names
-        pickup_en, dest_en: English city names
-        immediate: If True, write to sheet immediately. If False, queue for batch write.
-    """
-    # Initialize pending queue if needed
-    if 'matched_distances_pending' not in st.session_state:
-        st.session_state.matched_distances_pending = []
-    
-    # Check if already in pending queue (both directions)
-    for item in st.session_state.matched_distances_pending:
-        if (item['pickup_ar'] == pickup_ar and item['dest_ar'] == dest_ar) or \
-           (item['pickup_ar'] == dest_ar and item['dest_ar'] == pickup_ar):
-            return False  # Already queued
-    
-    if immediate:
-        # Write immediately (for single-lane pricing)
-        try:
-            worksheet = get_matched_distances_sheet()
-            if not worksheet:
-                return False
-            
-            # Check if this pair already exists in sheet (check both directions)
-            existing = worksheet.get_all_values()
-            for row in existing[1:]:  # Skip header
-                if len(row) >= 5:
-                    if (row[1] == pickup_ar and row[2] == dest_ar) or \
-                       (row[1] == dest_ar and row[2] == pickup_ar):
-                        return False  # Already exists
-            
-            # Find next row
-            next_row = len(existing) + 1
-        
-            # 1. Build the GOOGLEMAPS_DISTANCE formula for Column F
-            formula = f'=GOOGLEMAPS_DISTANCE("{pickup_en}, Saudi Arabia", "{dest_en}, Saudi Arabia", "driving")'
-            
-            # 2. Build the Logic Formula for Column G
-            # Logic: IF(F is a number greater than 0, return F, else blank)
-            value_ref = f'=IF(N(F{next_row})>0, F{next_row}, "")'
-            
-            # Write the row
-            row_data = [
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                pickup_ar,
-                dest_ar,
-                pickup_en,
-                dest_en,
-                formula,    # Column F: The calculation
-                value_ref,  # Column G: The conditional check
-                'Pending',
-                'No'
-            ]
-            worksheet.update(f'A{next_row}:I{next_row}', [row_data], value_input_option='USER_ENTERED')
-            return True
-        except Exception as e:
-            return False
-    else:
-        # Queue for batch write (for bulk pricing)
-        st.session_state.matched_distances_pending.append({
-            'pickup_ar': pickup_ar,
-            'dest_ar': dest_ar,
-            'pickup_en': pickup_en,
-            'dest_en': dest_en
-        })
-        return True
 
 def flush_matched_distances_to_sheet():
     """
@@ -702,10 +633,15 @@ def flush_matched_distances_to_sheet():
         return True, 0
     
     pending = st.session_state.matched_distances_pending
+    pending_count = len(pending)
     
     try:
         worksheet = get_matched_distances_sheet()
         if not worksheet:
+            # Log this issue to session state for visibility
+            if 'flush_errors' not in st.session_state:
+                st.session_state.flush_errors = []
+            st.session_state.flush_errors.append(f"Could not get MatchedDistances worksheet ({pending_count} items pending)")
             return False, 0
         
         # Get existing data to check for duplicates and find next row
@@ -758,6 +694,10 @@ def flush_matched_distances_to_sheet():
         return True, len(rows_to_add)
     
     except Exception as e:
+        # Log error for visibility
+        if 'flush_errors' not in st.session_state:
+            st.session_state.flush_errors = []
+        st.session_state.flush_errors.append(f"Error flushing distances: {str(e)} ({pending_count} items pending)")
         return False, 0
 
 def get_resolved_distances_from_sheet():
@@ -2750,9 +2690,9 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
     
     # Use override distance if provided, otherwise look it up
-    dist_source = 'User Provided'
     if dist_override is not None and dist_override > 0:
         dist = dist_override
+        dist_source = 'User Provided'
     else:
         # Use immediate_log=False for bulk pricing (queues errors for batch write)
         dist, dist_source = get_distance(pickup_ar, dest_ar, lane_data, immediate_log=False, check_history=check_history)
@@ -3179,6 +3119,36 @@ with tab2:
                                     'vehicle_raw': v_raw
                                 })
                             
+                            # Log missing distances EARLY for matched city pairs
+                            # This allows Google Sheets to start calculating while user resolves cities
+                            matched_pairs_checked = set()
+                            for row in parsed_rows:
+                                if row['pickup_ok'] and row['dest_ok'] and not row.get('dist_override'):
+                                    pair_key = (row['pickup_ar'], row['dest_ar'])
+                                    if pair_key not in matched_pairs_checked:
+                                        matched_pairs_checked.add(pair_key)
+                                        # Check if distance exists, log if missing
+                                        dist, source = get_distance(
+                                            row['pickup_ar'], row['dest_ar'], 
+                                            immediate_log=False
+                                        )
+                            
+                            # Flush missing distances to sheet immediately
+                            dist_flushed_ok, dist_flushed_count = flush_matched_distances_to_sheet()
+                            
+                            # Show flush result (will only be visible briefly before rerun)
+                            if dist_flushed_count > 0:
+                                st.session_state['last_distance_flush'] = f"✅ Logged {dist_flushed_count} missing distances for Google Maps lookup"
+                            elif not dist_flushed_ok:
+                                st.session_state['last_distance_flush'] = "⚠️ Failed to flush distances to sheet"
+                            else:
+                                # Check how many were in pending
+                                pending_before = len(matched_pairs_checked) - len([r for r in parsed_rows if r.get('dist_override')])
+                                if pending_before > 0:
+                                    st.session_state['last_distance_flush'] = f"ℹ️ No new distances to log ({pending_before} routes already had distances or exist in sheet)"
+                                else:
+                                    st.session_state['last_distance_flush'] = "ℹ️ All routes have distances or were skipped"
+                            
                             # Store in session state
                             st.session_state.bulk_wizard_data = {
                                 'username': username,
@@ -3213,6 +3183,16 @@ with tab2:
     # ============================================
     elif current_step == 1:
         st.markdown("### Step 2: Resolve Unmatched Cities")
+        
+        # Show last distance flush result if any
+        if 'last_distance_flush' in st.session_state:
+            st.caption(st.session_state['last_distance_flush'])
+        
+        # Show any flush errors
+        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
+            for err in st.session_state.flush_errors:
+                st.warning(err)
+            st.session_state.flush_errors = []  # Clear after showing
         
         wizard_data = st.session_state.bulk_wizard_data
         unmatched = wizard_data.get('unmatched_cities', {})
@@ -3516,6 +3496,22 @@ with tab2:
         if 'distance_results' not in st.session_state.bulk_wizard_data:
             st.info("Checking distances for all routes...")
             
+            # FIRST: Pull in any newly-resolved distances from MatchedDistances sheet
+            # This allows Google Maps API results to be used immediately
+            resolved_from_sheet = get_resolved_distances_from_sheet()
+            if resolved_from_sheet:
+                newly_added = 0
+                for item in resolved_from_sheet:
+                    key = (item['pickup_ar'], item['dest_ar'])
+                    rev_key = (item['dest_ar'], item['pickup_ar'])
+                    # Add to DISTANCE_MATRIX temporarily (in-memory only)
+                    if key not in DISTANCE_MATRIX:
+                        DISTANCE_MATRIX[key] = item['distance_km']
+                        DISTANCE_MATRIX[rev_key] = item['distance_km']
+                        newly_added += 1
+                if newly_added > 0:
+                    st.success(f"📏 Auto-imported {newly_added} distances from Google Sheets API")
+            
             # Get unique city pairs (only for active rows)
             city_pairs = {}
             for row in active_rows:
@@ -3536,12 +3532,25 @@ with tab2:
                 city_pairs[pair_key]['rows'].append(row['row_num'])
             
             # Flush missing distances to MatchedDistances sheet
-            flush_matched_distances_to_sheet()
+            flush_ok, flush_count = flush_matched_distances_to_sheet()
+            if flush_count > 0:
+                st.session_state['step2_distance_flush'] = f"📏 Logged {flush_count} missing distances for Google Maps lookup"
             
             st.session_state.bulk_wizard_data['distance_results'] = city_pairs
             st.rerun()
         
+        # Show Step 2 flush result
+        if 'step2_distance_flush' in st.session_state:
+            st.success(st.session_state['step2_distance_flush'])
+            del st.session_state['step2_distance_flush']
+        
         distance_results = st.session_state.bulk_wizard_data.get('distance_results', {})
+        
+        # Show any flush errors
+        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
+            for err in st.session_state.flush_errors:
+                st.warning(err)
+            st.session_state.flush_errors = []  # Clear after showing
         
         # Separate missing/new distances from existing
         missing_distances = {k: v for k, v in distance_results.items() 
@@ -3549,7 +3558,15 @@ with tab2:
         existing_distances = {k: v for k, v in distance_results.items() 
                             if v['distance'] > 0 and v['source'] != 'Missing'}
         
-        st.info(f"Found **{len(missing_distances)}** routes needing distance lookup, **{len(existing_distances)}** with existing distances.")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"Found **{len(missing_distances)}** routes needing distance lookup, **{len(existing_distances)}** with existing distances.")
+        with col2:
+            if st.button("🔄 Refresh from Sheets", help="Re-check Google Sheets for newly resolved distances"):
+                # Clear distance results to force re-check
+                if 'distance_results' in st.session_state.bulk_wizard_data:
+                    del st.session_state.bulk_wizard_data['distance_results']
+                st.rerun()
         
         # Initialize distance edits state
         if 'distance_edits' not in st.session_state:
@@ -3667,17 +3684,25 @@ with tab2:
                             user_name=username
                         )
                 
-                # Store final distances
+                # Store final distances WITH their sources
                 final_distances = {}
+                distance_sources = {}
                 for pair_key, info in distance_results.items():
                     if pair_key in st.session_state.distance_edits:
+                        # User edited in Step 2
                         final_distances[pair_key] = st.session_state.distance_edits[pair_key]
+                        distance_sources[pair_key] = 'User Edited'
                     elif info['user_override']:
+                        # User provided in CSV
                         final_distances[pair_key] = info['user_override']
+                        distance_sources[pair_key] = 'CSV Provided'
                     else:
+                        # From matrix/historical - store distance but mark source so we know not to override
                         final_distances[pair_key] = info['distance']
+                        distance_sources[pair_key] = info['source']  # 'Matrix', 'Historical', etc.
                 
                 st.session_state.bulk_wizard_data['final_distances'] = final_distances
+                st.session_state.bulk_wizard_data['distance_sources'] = distance_sources
                 st.session_state.bulk_wizard_step = 3
                 st.rerun()
         
@@ -3723,8 +3748,16 @@ with tab2:
                     dest_ar = row['dest_ar']
                     pair_key = (pickup_ar, dest_ar)
                     
-                    # Get distance
-                    dist_override = final_distances.get(pair_key, row.get('dist_override'))
+                    # Only use dist_override for user-edited or CSV-provided distances
+                    # Let lookup_route_stats find Matrix/Historical distances naturally
+                    distance_sources = wizard_data.get('distance_sources', {})
+                    source = distance_sources.get(pair_key, '')
+                    
+                    if source in ['User Edited', 'CSV Provided']:
+                        dist_override = final_distances.get(pair_key, row.get('dist_override'))
+                    else:
+                        # Let the function look up the distance naturally to get correct source
+                        dist_override = None
                     
                     # Price for each selected vehicle
                     for v_en in selected_vehicles:

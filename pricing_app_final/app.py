@@ -3892,89 +3892,250 @@ with tab2:
     # STEP 2: Distance Review
     # ============================================
     elif current_step == 2:
-        st.markdown("<h3 style='text-align: center;'>Step 3: Review Distances</h3>", unsafe_allow_html=True)
-        
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
+        username = wizard_data.get('username', '')
+        ignored_rows = wizard_data.get('ignored_rows', set())
         
-        # Identify missing distances
-        missing_distances = {} # Key: (pickup, dest) -> {rows: [], pickup_en, dest_en, source, distance}
-        distance_results = {}
+        # Filter out ignored rows
+        active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
         
-        # 1. Scan rows for missing info
-        for row in parsed_rows:
-            if row.get('ignored'): 
-                continue
-                
-            p_ar = row['pickup_ar']
-            d_ar = row['dest_ar']
+        # TOP NAVIGATION BAR (before any data loading)
+        nav_cols = st.columns([1, 3, 1])
+        with nav_cols[0]:
+            if st.button("⬅️ Back", key="step2_back_top", use_container_width=True):
+                st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
+                st.rerun()
+        with nav_cols[1]:
+            # This button will be enabled/disabled based on data loaded below
+            step2_continue = st.button("▶️ Generate Pricing", type="primary", 
+                        key="step2_next_top", use_container_width=True)
+        with nav_cols[2]:
+            st.empty()
+        
+        st.markdown("---")
+        st.markdown("### 📏 Review Distances")
+        
+        if ignored_rows:
+            st.caption(f"ℹ️ {len(ignored_rows)} routes ignored and excluded from pricing.")
+        
+        # Calculate distances for all routes
+        if 'distance_results' not in st.session_state.bulk_wizard_data:
+            st.info("Checking distances for all routes...")
             
-            if not p_ar or not d_ar:
-                continue
-                
-            pair_key = (p_ar, d_ar)
+            # FIRST: Pull in any newly-resolved distances from MatchedDistances sheet
+            # This allows Google Maps API results to be used immediately
+            resolved_from_sheet = get_resolved_distances_from_sheet()
+            if resolved_from_sheet:
+                newly_added = 0
+                for item in resolved_from_sheet:
+                    key = (item['pickup_ar'], item['dest_ar'])
+                    rev_key = (item['dest_ar'], item['pickup_ar'])
+                    # Add to DISTANCE_MATRIX temporarily (in-memory only)
+                    if key not in DISTANCE_MATRIX:
+                        DISTANCE_MATRIX[key] = item['distance_km']
+                        DISTANCE_MATRIX[rev_key] = item['distance_km']
+                        newly_added += 1
+                if newly_added > 0:
+                    st.success(f"📏 Auto-imported {newly_added} distances from Google Sheets API")
             
-            # Check cache/sheet if not already checked
-            if pair_key not in distance_results:
-                # Use override if exists
-                if row.get('dist_override'):
-                    distance_results[pair_key] = {
-                        'distance': row['dist_override'], 
-                        'source': 'CSV Provided',
-                        'user_override': row['dist_override']
-                    }
-                else:
-                    # Look up
-                    dist_val, source = get_distance(p_ar, d_ar)
-                    distance_results[pair_key] = {
-                        'distance': dist_val, 
+            # Get unique city pairs (only for active rows)
+            city_pairs = {}
+            for row in active_rows:
+                pair_key = (row['pickup_ar'], row['dest_ar'])
+                if pair_key not in city_pairs:
+                    # Check if distance exists
+                    dist, source = get_distance(row['pickup_ar'], row['dest_ar'], immediate_log=False)
+                    city_pairs[pair_key] = {
+                        'pickup_ar': row['pickup_ar'],
+                        'dest_ar': row['dest_ar'],
+                        'pickup_en': to_english_city(row['pickup_ar']),
+                        'dest_en': to_english_city(row['dest_ar']),
+                        'distance': dist,
                         'source': source,
-                        'user_override': None,
-                        'pickup_en': to_english_city(p_ar),
-                        'dest_en': to_english_city(d_ar)
+                        'user_override': row.get('dist_override'),
+                        'rows': []
                     }
+                city_pairs[pair_key]['rows'].append(row['row_num'])
             
-            # Add to missing list if 0
-            if distance_results[pair_key]['distance'] == 0:
-                if pair_key not in missing_distances:
-                    missing_distances[pair_key] = distance_results[pair_key]
-                    missing_distances[pair_key]['rows'] = []
-                missing_distances[pair_key]['rows'].append(row['row_num'])
-
-        # 2. Display Missing Distances Interface
-        if missing_distances:
-            st.warning(f"⚠️ Found {len(missing_distances)} routes with unknown distances.")
-            st.info("Please enter distances (km) below. These will be saved for future use.")
+            # Flush missing distances to MatchedDistances sheet
+            flush_ok, flush_count = flush_matched_distances_to_sheet()
             
-            # Initialize edits
-            if 'distance_edits' not in st.session_state:
-                st.session_state.distance_edits = {}
-            
-            count = 1
-            for pair_key, info in missing_distances.items():
-                p_ar, d_ar = pair_key
-                p_en = info.get('pickup_en', p_ar)
-                d_en = info.get('dest_en', d_ar)
+            # If we logged missing distances, wait for Google Maps API to process them
+            if flush_count > 0:
+                import time
+                status_placeholder = st.empty()
                 
-                with st.expander(f"{count}. {p_en} ➝ {d_en}", expanded=True):
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        st.caption(f"Arabic: {p_ar} ➝ {d_ar}")
-                        st.caption(f"Appears in {len(info['rows'])} rows")
-                    with c2:
-                        val = st.number_input(
-                            "Distance (km)", 
-                            min_value=0.0, 
-                            key=f"dist_{p_ar}_{d_ar}",
-                            value=st.session_state.distance_edits.get(pair_key, 0.0)
-                        )
-                        if val > 0:
-                            st.session_state.distance_edits[pair_key] = val
-                count += 1
-        else:
-            st.success("✅ All distances available. Ready to price!")
+                for remaining in range(10, 0, -1):
+                    status_placeholder.info(f"⏳ Waiting for Google Maps API to calculate {flush_count} distances... {remaining}s")
+                    time.sleep(1)
+                
+                # Read back newly-resolved distances
+                newly_resolved = get_resolved_distances_from_sheet()
+                newly_added = 0
+                
+                for item in newly_resolved:
+                    key = (item['pickup_ar'], item['dest_ar'])
+                    rev_key = (item['dest_ar'], item['pickup_ar'])
+                    if key not in DISTANCE_MATRIX:
+                        DISTANCE_MATRIX[key] = item['distance_km']
+                        DISTANCE_MATRIX[rev_key] = item['distance_km']
+                        newly_added += 1
+                        
+                        # Update city_pairs if this pair was missing
+                        if key in city_pairs and city_pairs[key]['distance'] == 0:
+                            city_pairs[key]['distance'] = item['distance_km']
+                            city_pairs[key]['source'] = 'Google Maps API'
+                
+                if newly_added > 0:
+                    status_placeholder.success(f"✅ Google Maps resolved {newly_added}/{flush_count} distances!")
+                else:
+                    status_placeholder.warning(f"⚠️ Google Maps API didn't return results yet. You can enter distances manually below.")
+            
+            st.session_state.bulk_wizard_data['distance_results'] = city_pairs
+            
+            # ⚠️ DELETE any existing st.rerun() or flush calls inside this 'if' block
+            # We are moving them to Fix 3 below so they run every time, not just once.
 
-        # 3. Navigation
+        # =======================================================
+        # 👇 FIX 3 STARTS HERE (Robust Flush on Every Render)
+        # =======================================================
+        
+        # 1. Try to flush Append Sheet (matches/new cities from Step 1)
+        if 'append_sheet_pending' in st.session_state and st.session_state.append_sheet_pending:
+             flush_append_sheet()
+             
+        # 2. Try to flush Matched Cities (fuzzy matches from Step 1)
+        if 'matched_cities_pending' in st.session_state and st.session_state.matched_cities_pending:
+             flush_matched_cities_to_sheet()
+
+        # 3. Try to flush Ignored Routes errors (from Step 1)
+        if 'error_log_pending' in st.session_state and st.session_state.error_log_pending:
+             flush_error_log_to_sheet()
+
+        # 4. Check/Flush Missing Distances (calculated in initialization above)
+        if 'matched_distances_pending' in st.session_state and st.session_state.matched_distances_pending:
+            flush_ok, flush_count = flush_matched_distances_to_sheet()
+            if flush_count > 0:
+                st.toast(f"✅ Sent {flush_count} missing distances to Google Sheet", icon="📏")
+        
+        # Force rerun ONLY if we just initialized data (to clear the loading spinner)
+        # This replaces the st.rerun() that used to be inside the if block
+        if 'distance_results' not in st.session_state.bulk_wizard_data:
+             st.rerun()
+             
+        # =======================================================
+        # 👆 FIX 3 ENDS HERE
+        # =======================================================
+        
+        # Show Step 2 flush result
+        if 'step2_distance_flush' in st.session_state:
+            st.success(st.session_state['step2_distance_flush'])
+            del st.session_state['step2_distance_flush']
+        
+        distance_results = st.session_state.bulk_wizard_data.get('distance_results', {})
+        
+        # Show any flush errors
+        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
+            for err in st.session_state.flush_errors:
+                st.warning(err)
+            st.session_state.flush_errors = []  # Clear after showing
+        
+        # Separate missing/new distances from existing
+        missing_distances = {k: v for k, v in distance_results.items() 
+                           if v['distance'] == 0 or v['source'] == 'Missing'}
+        existing_distances = {k: v for k, v in distance_results.items() 
+                            if v['distance'] > 0 and v['source'] != 'Missing'}
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"Found **{len(missing_distances)}** routes needing distance lookup, **{len(existing_distances)}** with existing distances.")
+        with col2:
+            if st.button("🔄 Refresh from Sheets", help="Re-check Google Sheets for newly resolved distances"):
+                # Clear distance results to force re-check
+                if 'distance_results' in st.session_state.bulk_wizard_data:
+                    del st.session_state.bulk_wizard_data['distance_results']
+                st.rerun()
+        
+        # Initialize distance edits state
+        if 'distance_edits' not in st.session_state:
+            st.session_state.distance_edits = {}
+        
+        # Show missing distances first (needing attention)
+        if missing_distances:
+            st.markdown("#### ⚠️ Routes Needing Distances")
+            st.caption("These routes are missing distances. Enter values manually or wait for Google Maps API.")
+            
+            for pair_key, info in missing_distances.items():
+                with st.expander(f"📏 {info['pickup_en']} → {info['dest_en']} ({len(info['rows'])} routes)", expanded=True):
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    
+                    with col1:
+                        st.caption(f"Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
+                        if info['user_override']:
+                            st.info(f"User provided: {info['user_override']} km")
+                    
+                    with col2:
+                        # Distance input
+                        dist_key = f"dist_{pair_key[0]}_{pair_key[1]}"
+                        default_val = info['user_override'] if info['user_override'] else 0.0
+                        new_dist = st.number_input(
+                            "Distance (km)",
+                            min_value=0.0,
+                            max_value=5000.0,
+                            value=float(default_val),
+                            step=10.0,
+                            key=dist_key
+                        )
+                        
+                        if new_dist > 0:
+                            st.session_state.distance_edits[pair_key] = new_dist
+                    
+                    with col3:
+                        if new_dist > 0:
+                            st.success("✅")
+                        else:
+                            st.warning("⚠️")
+        
+        # Show existing distances (for review/edit)
+        if existing_distances:
+            st.markdown("#### ✅ Routes with Distances")
+            st.caption("Review and edit if needed.")
+            
+            # Create a dataframe for display
+            dist_df = pd.DataFrame([
+                {
+                    'From': info['pickup_en'],
+                    'To': info['dest_en'],
+                    'Distance (km)': info['distance'],
+                    'Source': info['source'],
+                    'Routes': len(info['rows'])
+                }
+                for info in existing_distances.values()
+            ])
+            
+            st.dataframe(dist_df, use_container_width=True, hide_index=True)
+            
+            with st.expander("Edit existing distances"):
+                for pair_key, info in existing_distances.items():
+                    col1, col2 = st.columns([3, 2])
+                    with col1:
+                        st.text(f"{info['pickup_en']} → {info['dest_en']}")
+                    with col2:
+                        dist_key = f"dist_edit_{pair_key[0]}_{pair_key[1]}"
+                        new_dist = st.number_input(
+                            "Distance (km)",
+                            min_value=0.0,
+                            max_value=5000.0,
+                            value=float(info['distance']),
+                            step=10.0,
+                            key=dist_key,
+                            label_visibility="collapsed"
+                        )
+                        if new_dist != info['distance']:
+                            st.session_state.distance_edits[pair_key] = new_dist
+        
+        # Navigation
         st.markdown("---")
         
         # Check if all missing distances are resolved
@@ -3983,10 +4144,14 @@ with tab2:
             for pair_key, info in missing_distances.items()
         )
         
-        # Symmetrical Buttons [1, 1, 1]
+        # =========================================================
+        # FIX START: Symmetrical Button Layout & Sizing
+        # =========================================================
+        # UPDATED: Symmetrical [1, 1, 1] layout for buttons so they are even
         c_back, c_cont, c_reset = st.columns([1, 1, 1])
         
         with c_back:
+            # FIX: Added use_container_width=True
             if st.button("⬅️ Back to Cities", use_container_width=True):
                 st.session_state.bulk_wizard_step = 1 if wizard_data.get('unmatched_cities') else 0
                 st.rerun()
@@ -3995,15 +4160,18 @@ with tab2:
             proceed_disabled = bool(missing_distances) and not all_resolved
             btn_text = "Generate Pricing ▶️" if not proceed_disabled else "Resolve Missing 🚫"
             
+            # FIX: Added use_container_width=True
             if st.button(btn_text, type="primary", use_container_width=True, disabled=proceed_disabled):
-                # Log suggestions
+                # =========================================================
+                # LOGIC PRESERVED: Processing Distance Edits
+                # =========================================================
+                # Log distance edits as user suggestions
                 for pair_key, new_dist in st.session_state.distance_edits.items():
                     pickup_ar, dest_ar = pair_key
                     info = distance_results.get(pair_key, {})
                     old_dist = info.get('distance', 0)
                     
                     if new_dist != old_dist:
-                        username = wizard_data.get('username', 'Unknown')
                         suggest_distance_change(
                             pickup_ar, dest_ar, 
                             info.get('pickup_en', to_english_city(pickup_ar)), 
@@ -4011,7 +4179,7 @@ with tab2:
                             old_dist, new_dist, username
                         )
                 
-                # Store final
+                # Store final distances
                 final_distances = {}
                 distance_sources = {}
                 for pair_key, info in distance_results.items():
@@ -4031,134 +4199,131 @@ with tab2:
                 st.rerun()
         
         with c_reset:
+            # FIX: Added use_container_width=True
             if st.button("🔄 Reset All", use_container_width=True):
                 reset_wizard()
                 st.rerun()
         
+        # =========================================================
+        # FIX END
+        # =========================================================
+        
     # ============================================
-    # STEP 3: Final Pricing & Output
+    # STEP 3: Final Pricing
     # ============================================
     elif current_step == 3:
-        st.markdown("<h3 style='text-align: center;'>Step 4: Final Pricing Results</h3>", unsafe_allow_html=True)
-        
         wizard_data = st.session_state.bulk_wizard_data
-        final_distances = wizard_data.get('final_distances', {})
         parsed_rows = wizard_data.get('parsed_rows', [])
-        selected_vehicles = wizard_data.get('selected_vehicles', [])
+        selected_vehicles = wizard_data.get('selected_vehicles', ['Flatbed Trailer'])
+        final_distances = wizard_data.get('final_distances', {})
+        username = wizard_data.get('username', '')
+        ignored_rows = wizard_data.get('ignored_rows', set())
         
-        # 1. Run Pricing Logic
-        final_results = []
-        pricing_prog = st.progress(0)
+        # Filter out ignored rows
+        active_rows = [row for row in parsed_rows if not row.get('ignored', False)]
         
-        for i, row in enumerate(parsed_rows):
-            pricing_prog.progress((i + 1) / len(parsed_rows))
-            
-            if row.get('ignored'):
-                continue
-                
-            p_ar = row['pickup_ar']
-            d_ar = row['dest_ar']
-            
-            # Get Distance
-            pair_key = (p_ar, d_ar)
-            dist = final_distances.get(pair_key, 0)
-            
-            # Base result object - Using OFFICIAL names only
-            base_res = {
-                'Row': row['row_num'],
-                'Pickup City': p_ar,
-                'Destination City': d_ar,
-                'Distance (km)': dist,
-                'Region': f"{get_city_region(p_ar)} -> {get_city_region(d_ar)}"
-            }
-            
-            # Price for each vehicle
-            for v_type_en in selected_vehicles:
-                # Convert English selection to Arabic for calculation
-                v_type_ar = to_arabic_vehicle(v_type_en)
-                
-                # --- CORRECTED PRICING CALL ---
-                # Use the existing calculate_prices function instead of get_freight_price
-                pricing = calculate_prices(p_ar, d_ar, v_type_ar, dist)
-                
-                price = pricing['buy_price']
-                method = pricing['model_used']
-                
-                # Add to result
-                row_res = base_res.copy()
-                row_res['Vehicle'] = v_type_en
-                row_res['Price'] = price
-                row_res['Method'] = method
-                final_results.append(row_res)
-        
-        pricing_prog.empty()
-        
-        # 2. Display Results
-        if not final_results:
-            st.warning("No valid routes to price.")
-            if st.button("⬅️ Back"):
+        # TOP NAVIGATION BAR
+        nav_cols = st.columns([1, 2, 2])
+        with nav_cols[0]:
+            if st.button("⬅️ Back", key="step3_back_top", use_container_width=True):
+                st.session_state.bulk_results_stale = True
                 st.session_state.bulk_wizard_step = 2
                 st.rerun()
+        with nav_cols[1]:
+            if st.button("🔄 New Lookup", key="step3_reset_top", use_container_width=True):
+                reset_wizard()
+                st.rerun()
+        with nav_cols[2]:
+            st.empty()
+        
+        st.markdown("---")
+        st.markdown("### 💰 Pricing Results")
+        
+        if ignored_rows:
+            st.caption(f"ℹ️ {len(ignored_rows)} routes excluded.")
+        
+        if not active_rows:
+            st.warning("⚠️ All routes were ignored. No pricing to generate.")
+            if st.button("🔄 Start New Bulk Lookup", use_container_width=True):
+                reset_wizard()
+                st.rerun()
         else:
-            df_res = pd.DataFrame(final_results)
+            # Generate pricing
+            if 'bulk_results' not in st.session_state or st.session_state.get('bulk_results_stale', True):
+                results = []
+                
+                progress = st.progress(0)
+                status = st.empty()
+                
+                for i, row in enumerate(active_rows):
+                    pickup_ar = row['pickup_ar']
+                    dest_ar = row['dest_ar']
+                    pair_key = (pickup_ar, dest_ar)
+                    
+                    # Only use dist_override for user-edited or CSV-provided distances
+                    # Let lookup_route_stats find Matrix/Historical distances naturally
+                    distance_sources = wizard_data.get('distance_sources', {})
+                    source = distance_sources.get(pair_key, '')
+                    
+                    if source in ['User Edited', 'CSV Provided']:
+                        dist_override = final_distances.get(pair_key, row.get('dist_override'))
+                    else:
+                        # Let the function look up the distance naturally to get correct source
+                        dist_override = None
+                    
+                    # Price for each selected vehicle
+                    for v_en in selected_vehicles:
+                        v_ar = to_arabic_vehicle(v_en)
+                        
+                        result = lookup_route_stats(
+                            pickup_ar, dest_ar, v_ar,
+                            dist_override=dist_override
+                        )
+                        result['CSV_Row'] = row['row_num']
+                        results.append(result)
+                    
+                    progress.progress((i + 1) / len(active_rows))
+                    status.text(f"Pricing {i + 1}/{len(active_rows)}: {row['pickup_raw']} → {row['dest_raw']}")
+                
+                status.text("✅ Complete!")
+                st.session_state.bulk_results = pd.DataFrame(results)
+                st.session_state.bulk_results_stale = False
+                
+                # Flush logs
+                flush_error_log_to_sheet()
+                flush_matched_distances_to_sheet()
             
-            # Reorder columns for clarity
-            desired_order = [
-                'Row', 
-                'Pickup City', 'Destination City', 
-                'Vehicle', 'Price', 'Distance (km)', 'Method'
-            ]
-            # Intersect with available columns to avoid errors
-            cols = [c for c in desired_order if c in df_res.columns]
-            df_res = df_res[cols]
+            # Display results
+            res_df = st.session_state.bulk_results
             
-            # UI: Centered Summary Metrics
-            st.markdown(
-                """
-                <style>
-                div[data-testid="stMetric"] { text-align: center; }
-                </style>
-                """, unsafe_allow_html=True
-            )
+            st.success(f"Generated pricing for **{len(res_df)}** route-vehicle combinations")
             
-            c_sum1, c_sum2, c_sum3 = st.columns(3)
-            with c_sum1: st.metric("Total Routes Priced", len(parsed_rows))
-            with c_sum2: st.metric("Total Quotes Generated", len(df_res))
-            with c_sum3: st.metric("Avg. Price", f"{df_res['Price'].mean():,.0f} SAR")
+            st.dataframe(res_df, use_container_width=True, hide_index=True)
             
-            st.dataframe(df_res, use_container_width=True, height=400)
-            
-            # 3. Final Actions (Save & Export)
+            # Save section
             st.markdown("---")
             st.subheader("💾 Save Results")
             
-            rfq_url = st.secrets.get('RFQ_url')
+            rfq_sheet_url = st.secrets.get('RFQ_url', '')
             
-            # Symmetrical Columns for Download vs Upload
-            c_dl, c_up = st.columns([1, 1])
+            col1, col2 = st.columns(2)
             
-            with c_dl:
-                st.markdown("##### 📥 Local Download")
-                csv = df_res.to_csv(index=False).encode('utf-8-sig')
-                date_str = datetime.now().strftime("%Y%m%d_%H%M")
-                
+            with col1:
                 st.download_button(
-                    label="Download Excel/CSV",
-                    data=csv,
-                    file_name=f"pricing_results_{date_str}.csv",
-                    mime="text/csv",
+                    "📥 Download CSV",
+                    res_df.to_csv(index=False),
+                    "pricing_results.csv",
+                    "text/csv",
                     type="primary",
                     use_container_width=True
                 )
             
-            with c_up:
-                st.markdown("##### ☁️ Google Sheets")
-                if rfq_url:
+            with col2:
+                if rfq_sheet_url:
                     default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                    sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name', label_visibility="collapsed")
+                    sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
                     
-                    if st.button("Upload to Sheet", use_container_width=True):
-                        # Progress bar logic
+                    if st.button("☁️ Upload to Google Sheet", use_container_width=True):
                         progress = st.progress(0)
                         status = st.empty()
                         
@@ -4166,25 +4331,18 @@ with tab2:
                             progress.progress(done / total)
                             status.text(f"Uploading {done}/{total}...")
                         
-                        ok, msg = upload_to_rfq_sheet(df_res, sheet_name, progress_callback=update_progress)
+                        ok, msg = upload_to_rfq_sheet(res_df, sheet_name, progress_callback=update_progress)
                         progress.progress(1.0)
                         status.empty()
                         
                         if ok:
                             st.success(msg)
-                            st.markdown(f"[🔗 Open Sheet]({rfq_url})")
+                            st.link_button("🔗 Open Sheet", rfq_sheet_url)
                         else:
                             st.error(msg)
-                else:
-                    st.info("⚠️ RFQ_url not found in secrets. Upload disabled.")
 
-            # 4. Navigation (Reset)
-            st.markdown("---")
-            if st.button("🔄 Start New Search", use_container_width=True):
-                reset_wizard()
-                st.rerun()
-                
 # --- TAB 3: MAP EXPLORER (OSM ROUTING) ---
+# --- TAB 3: MAP EXPLORER (KEY ROTATION FIX) ---
 with tab3:
     st.subheader("🗺️ Live Distance Calculator (OSM)")
 

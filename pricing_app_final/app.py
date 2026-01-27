@@ -4073,32 +4073,21 @@ with tab2:
             }
             
             # Price for each vehicle
-            for v_type in selected_vehicles:
-                # A. Direct Lookup
-                price, method = get_freight_price(p_ar, d_ar, v_type)
+            for v_type_en in selected_vehicles:
+                # Convert English selection to Arabic for calculation
+                v_type_ar = to_arabic_vehicle(v_type_en)
                 
-                # B. Model Prediction if no direct rate
-                if price is None:
-                    # Prepare features
-                    feats = {
-                        'distance_km': dist,
-                        'pickup_province': get_city_province(p_ar),
-                        'drop_province': get_city_province(d_ar),
-                        'pickup_region': get_city_region(p_ar),
-                        'drop_region': get_city_region(d_ar),
-                        'vehicle_type': v_type
-                    }
-                    try:
-                        price = predict_price_catboost(feats)
-                        method = "AI Model"
-                    except:
-                        price = 0
-                        method = "Error"
+                # --- CORRECTED PRICING CALL ---
+                # Use the existing calculate_prices function instead of get_freight_price
+                pricing = calculate_prices(p_ar, d_ar, v_type_ar, dist)
+                
+                price = pricing['buy_price']
+                method = pricing['model_used']
                 
                 # Add to result
                 row_res = base_res.copy()
-                row_res['Vehicle'] = v_type
-                row_res['Price'] = round(price, 2)
+                row_res['Vehicle'] = v_type_en
+                row_res['Price'] = price
                 row_res['Method'] = method
                 final_results.append(row_res)
         
@@ -4166,7 +4155,7 @@ with tab2:
                 st.markdown("##### ☁️ Google Sheets")
                 if rfq_url:
                     default_sheet_name = f"Pricing_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                    sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name')
+                    sheet_name = st.text_input("Sheet Name", value=default_sheet_name, key='result_sheet_name', label_visibility="collapsed")
                     
                     if st.button("Upload to Sheet", use_container_width=True):
                         # Progress bar logic

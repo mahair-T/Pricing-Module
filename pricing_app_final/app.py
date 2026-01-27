@@ -576,8 +576,8 @@ def flush_append_sheet():
 
 def flush_matched_distances_to_sheet():
     """
-    Flush pending matched distances to Google Sheet.
-    Includes explicit grid expansion to prevent 'exceeds grid limits' errors.
+    Flush pending matched distances to Google Sheet using Explicit Resize.
+    This bypasses 'append_rows' grid limit issues by manually expanding the sheet.
     """
     if 'matched_distances_pending' not in st.session_state or len(st.session_state.matched_distances_pending) == 0:
         return True, 0
@@ -589,28 +589,33 @@ def flush_matched_distances_to_sheet():
         if not worksheet:
             return False, 0
         
-        # Get existing data to check for duplicates
-        existing = worksheet.get_all_values()
+        # 1. Get all existing data to determine where the data ends
+        #    (We use this instead of row_count to find the true bottom of the data)
+        existing_values = worksheet.get_all_values()
+        last_data_row = len(existing_values)
+        
+        # Build existing pairs set for deduplication
         existing_pairs = set()
-        for row in existing[1:]:
+        for row in existing_values[1:]:
             if len(row) >= 3:
                 existing_pairs.add((row[1], row[2]))
                 existing_pairs.add((row[2], row[1]))
         
         rows_to_add = []
-        start_row_index = len(existing) + 1 
+        # Start writing at the next available line
+        start_row_index = last_data_row + 1 
         
         for i, item in enumerate(pending):
-            # Skip if already exists
+            # Skip duplicates
             if (item['pickup_ar'], item['dest_ar']) in existing_pairs:
                 continue
             if (item['dest_ar'], item['pickup_ar']) in existing_pairs:
                 continue
             
-            # Calculate the row number this specific entry will land on
+            # Calculate the explicit row number for this entry
             current_row_num = start_row_index + len(rows_to_add)
             
-            # Build formulas
+            # Build formulas using the correct row number
             formula = f'=GOOGLEMAPS_DISTANCE("{item["pickup_en"]}, Saudi Arabia", "{item["dest_en"]}, Saudi Arabia", "driving")'
             value_ref = f'=IF(N(F{current_row_num})>0, F{current_row_num}, "")'
             
@@ -629,19 +634,33 @@ def flush_matched_distances_to_sheet():
             existing_pairs.add((item['pickup_ar'], item['dest_ar']))
         
         if rows_to_add:
-            # ✅ FIX: Force-add rows to prevent "Grid Limits" error
-            worksheet.add_rows(len(rows_to_add))
+            count = len(rows_to_add)
             
-            # Now append the data safely
-            worksheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
+            # 2. CALCULATE EXACT RANGE
+            #    We need to write from A{start} to I{end}
+            end_row_index = start_row_index + count - 1
+            range_string = f"A{start_row_index}:I{end_row_index}"
+            
+            # 3. FORCE RESIZE SHEET
+            #    Ensure the grid is large enough to hold the new end row
+            current_grid_rows = worksheet.row_count
+            if end_row_index > current_grid_rows:
+                # Add a small buffer (e.g., +10 rows) or just exact size
+                worksheet.resize(rows=end_row_index + 5)
+            
+            # 4. EXPLICIT WRITE (Not Append)
+            #    Write directly to the calculated range
+            worksheet.update(range_name=range_string, values=rows_to_add, value_input_option='USER_ENTERED')
         
+        # Success - clear queue
         st.session_state.matched_distances_pending = []
         return True, len(rows_to_add)
     
     except Exception as e:
+        # Log error for debugging
         if 'flush_errors' not in st.session_state:
             st.session_state.flush_errors = []
-        st.session_state.flush_errors.append(f"Flush Error: {str(e)}")
+        st.session_state.flush_errors.append(f"Dist Flush Error: {str(e)}")
         return False, 0
 
 def update_city_normalization_pickle(new_entries):

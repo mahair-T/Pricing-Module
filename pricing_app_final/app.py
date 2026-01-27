@@ -3501,66 +3501,57 @@ with tab2:
     elif current_step == 1:
         st.markdown("<h3 style='text-align: center;'>Step 2: Resolve Unmatched Cities</h3>", unsafe_allow_html=True)
         
+        # 1. LOAD DATA FRESH FROM STATE
+        wizard_data = st.session_state.bulk_wizard_data
+        unmatched = wizard_data.get('unmatched_cities', {})
+        fuzzy_results = wizard_data.get('fuzzy_results', {})
+        
+        # Ensure 'google_suggestions' is initialized in wizard_data
+        if 'google_suggestions' not in wizard_data:
+            wizard_data['google_suggestions'] = {}
+        google_suggestions = wizard_data['google_suggestions']
+
+        # Ensure 'city_resolutions' exists in session_state
+        if 'city_resolutions' not in st.session_state:
+            st.session_state.city_resolutions = {}
+        
         # Show last distance flush result if any
         if 'last_distance_flush' in st.session_state:
             st.caption(st.session_state['last_distance_flush'])
         
-        # Show any flush errors
-        if 'flush_errors' in st.session_state and st.session_state.flush_errors:
-            for err in st.session_state.flush_errors:
-                st.warning(err)
-            st.session_state.flush_errors = []  # Clear after showing
-        
-        # Load Data
-        wizard_data = st.session_state.bulk_wizard_data
-        unmatched = wizard_data.get('unmatched_cities', {})
-        fuzzy_results = wizard_data.get('fuzzy_results', {})
-        google_suggestions = wizard_data.get('google_suggestions', {})
-        username = wizard_data.get('username', '')
-        
+        # Check if we are done
         if not unmatched:
             st.success("All cities matched! Proceeding to distance review...")
             st.session_state.bulk_wizard_step = 2
             st.rerun()
 
-        # --- CALCULATE LIVE STATS ---
-        # We calculate these live to reflect changes immediately
-        if 'city_resolutions' not in st.session_state:
-            st.session_state.city_resolutions = {}
-            
+        # 2. CALCULATE LIVE STATS (Before rendering dashboard)
         resolved_count = len(st.session_state.city_resolutions)
         total_count = len(unmatched)
         remaining_count = total_count - resolved_count
         
-        # Calculate breakdown of REMAINING items
+        # Breakdown of PENDING items only
         pending_google = 0
         pending_fuzzy = 0
         pending_none = 0
         
         for city in unmatched:
             if city not in st.session_state.city_resolutions:
-                if google_suggestions.get(city, {}).get('success'):
+                # Check match status
+                has_google = google_suggestions.get(city, {}).get('success', False)
+                has_fuzzy = fuzzy_results.get(city, {}).get('match_found', False)
+                
+                if has_google:
                     pending_google += 1
-                elif fuzzy_results.get(city, {}).get('match_found'):
+                elif has_fuzzy:
                     pending_fuzzy += 1
                 else:
                     pending_none += 1
 
-        # --- CENTERED STATS DASHBOARD ---
-        # Layout: Main Pending Count | Breakdown of Match Types
-        
-        # Container for visual styling
+        # 3. RENDER DASHBOARD
         st.markdown("""
         <style>
-            .stat-box {
-                text-align: center; 
-                padding: 10px; 
-                border-radius: 8px; 
-                border: 1px solid #f0f2f6;
-                background-color: white;
-            }
-            .stat-num { font-size: 24px; font-weight: bold; }
-            .stat-label { font-size: 14px; color: #555; }
+            .stat-box { text-align: center; padding: 10px; border-radius: 8px; border: 1px solid #f0f2f6; background-color: white; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -3588,26 +3579,30 @@ with tab2:
             with bc3:
                 st.metric("❌ No Match", pending_none, help="Requires manual entry or ignore")
             
-            # Refresh Button underneath breakdown
+            # REFRESH BUTTON
             if st.button("🔄 Check Google Maps Again", use_container_width=True, help="Click if waiting for background geocoding"):
                 cities_to_check = [c for c in unmatched.keys()]
                 if cities_to_check:
-                    with st.spinner("Checking Google Sheets for new results..."):
+                    with st.spinner("Syncing with Google Sheets..."):
+                        # Force fresh read
                         new_results = read_geocode_results(cities_to_check)
+                        # Update the nested dictionary explicitly
                         st.session_state.bulk_wizard_data['google_suggestions'] = new_results
-                        # Toast result
-                        found_new = sum(1 for c in cities_to_check if new_results.get(c, {}).get('success'))
-                        st.toast(f"Sync Complete. Found {found_new} locations.", icon="🌍")
+                        
+                        # Calculate how many found for toast
+                        found_cnt = sum(1 for c in cities_to_check if new_results.get(c, {}).get('success'))
+                        st.toast(f"Sync Complete. Found {found_cnt} locations.", icon="🌍")
+                        
                         import time
-                        time.sleep(1)
+                        time.sleep(1) # Short pause to ensure state propagates
                         st.rerun()
 
         st.markdown("---")
 
-        # --- RESOLUTION LIST ---
+        # 4. RESOLUTION LIST
         st.markdown("#### Action Required")
         
-        # Sort keys to show: Google -> Fuzzy -> None -> Resolved
+        # Sort logic: Google -> Fuzzy -> None -> Resolved
         def sort_priority(c_name):
             if c_name in st.session_state.city_resolutions: return 4
             if google_suggestions.get(c_name, {}).get('success'): return 1
@@ -3619,7 +3614,7 @@ with tab2:
         for idx, city_name in enumerate(sorted_cities):
             info = unmatched[city_name]
             
-            # Determine match type visuals
+            # Determine match type
             has_google = google_suggestions.get(city_name, {}).get('success', False)
             has_fuzzy = fuzzy_results.get(city_name, {}).get('match_found', False)
             
@@ -3636,11 +3631,11 @@ with tab2:
                 match_label = "No Match"
                 expanded_default = True 
             
-            # Check if already resolved
+            # Check resolution status
             is_resolved = city_name in st.session_state.city_resolutions
             status_icon = "✅" if is_resolved else match_icon
             
-            # Collapse if resolved, otherwise respect default
+            # Collapse if resolved
             is_expanded = False if is_resolved else expanded_default
 
             with st.expander(f"{status_icon} **{city_name}** ({match_label})", expanded=is_expanded):
@@ -3725,7 +3720,7 @@ with tab2:
                                 }
                                 st.rerun()
         
-        # --- NAVIGATION BUTTONS (FIXED SIZING 1:1:1) ---
+        # 5. NAVIGATION
         st.markdown("---")
         c_back, c_ignore, c_cont = st.columns([1, 1, 1])
         
@@ -3735,18 +3730,35 @@ with tab2:
                 st.rerun()
 
         with c_ignore:
-            # "Ignore All" logic
-            if remaining_count > 0:
-                if st.button(f"🗑️ Ignore {remaining_count} Remaining", use_container_width=True, help="Skip all currently unresolved cities"):
+            # UPDATED IGNORE LOGIC: Only ignore cities with NO matches (Google/Fuzzy)
+            # pending_none is calculated above in step 2
+            
+            if pending_none > 0:
+                if st.button(f"🗑️ Ignore {pending_none} No-Matches", use_container_width=True, help="Ignore only cities with NO Google or Fuzzy matches"):
+                    count_ignored = 0
                     for city in unmatched.keys():
-                        if city not in st.session_state.city_resolutions:
+                        # Skip if already resolved
+                        if city in st.session_state.city_resolutions:
+                            continue
+                        
+                        # Check match status again
+                        has_google = google_suggestions.get(city, {}).get('success', False)
+                        has_fuzzy = fuzzy_results.get(city, {}).get('match_found', False)
+                        
+                        # Only ignore if NO suggestions exist
+                        if not has_google and not has_fuzzy:
                             st.session_state.city_resolutions[city] = {
                                 'type': 'ignored',
                                 'rows': unmatched[city]['rows']
                             }
+                            count_ignored += 1
+                    
+                    st.toast(f"Marked {count_ignored} cities as ignored.", icon="🗑️")
+                    import time
+                    time.sleep(1)
                     st.rerun()
             else:
-                 st.button("🗑️ Ignore Remaining", use_container_width=True, disabled=True)
+                 st.button("🗑️ Ignore No-Matches", use_container_width=True, disabled=True)
         
         with c_cont:
             can_proceed = resolved_count >= total_count
@@ -3763,6 +3775,8 @@ with tab2:
                     new_entries = []
                     ignored_rows = set()
                     
+                    username = wizard_data.get('username', 'Unknown')
+
                     for city_name, resolution in resolutions.items():
                         if resolution['type'] == 'ignored':
                             for row_num in resolution.get('rows', []):

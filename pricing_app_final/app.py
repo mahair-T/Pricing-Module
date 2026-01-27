@@ -408,6 +408,197 @@ def get_append_sheet():
     except Exception as e:
         return None
 
+def get_geocode_lookup_sheet():
+    """
+    Get or create the GeocodeLookup sheet for automatic Google Maps geocoding.
+    Uses GOOGLEMAPS_LATLONG formula to resolve unmatched city names.
+    
+    Columns:
+    A: Input (city name to geocode)
+    B: Latitude (formula result)
+    C: Longitude (formula result)  
+    D: Matched Name (formula result - what Google thinks this city is)
+    E: Status (Pending/Resolved/Error)
+    F: Timestamp
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        sheet_url = st.secrets.get('error_log_sheet_url')
+        if not sheet_url:
+            return None
+        
+        spreadsheet = client.open_by_url(sheet_url)
+        
+        try:
+            worksheet = spreadsheet.worksheet('GeocodeLookup')
+        except:
+            # Create sheet with headers
+            worksheet = spreadsheet.add_worksheet(title='GeocodeLookup', rows=500, cols=6)
+            headers = ['Input', 'Latitude', 'Longitude', 'Matched_Name', 'Status', 'Timestamp']
+            worksheet.update('A1:F1', [headers])
+        
+        return worksheet
+    except Exception as e:
+        return None
+
+def write_cities_for_geocoding(city_names):
+    """
+    Write unmatched city names to GeocodeLookup sheet with GOOGLEMAPS_LATLONG formula.
+    
+    Args:
+        city_names: List of city names to geocode
+        
+    Returns:
+        (success, count_written, start_row) tuple
+    """
+    if not city_names:
+        return True, 0, 0
+    
+    try:
+        worksheet = get_geocode_lookup_sheet()
+        if not worksheet:
+            return False, 0, 0
+        
+        # Get existing data to find next row and check for duplicates
+        existing = worksheet.get_all_values()
+        existing_inputs = set()
+        for row in existing[1:]:  # Skip header
+            if len(row) > 0:
+                existing_inputs.add(row[0].strip().lower())
+        
+        next_row = len(existing) + 1
+        start_row = next_row
+        rows_to_add = []
+        
+        for city in city_names:
+            # Skip if already in sheet
+            if city.strip().lower() in existing_inputs:
+                continue
+            
+            # Build row with GOOGLEMAPS_LATLONG formula
+            # The formula returns [[lat, lng, address]] so we need INDEX to extract each part
+            formula_lat = f'=IFERROR(INDEX(GOOGLEMAPS_LATLONG(A{next_row}), 1, 1), "")'
+            formula_lon = f'=IFERROR(INDEX(GOOGLEMAPS_LATLONG(A{next_row}), 1, 2), "")'
+            formula_name = f'=IFERROR(INDEX(GOOGLEMAPS_LATLONG(A{next_row}), 1, 3), "")'
+            
+            row_data = [
+                city,                                           # A: Input
+                formula_lat,                                    # B: Latitude
+                formula_lon,                                    # C: Longitude
+                formula_name,                                   # D: Matched Name
+                'Pending',                                      # E: Status
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S')   # F: Timestamp
+            ]
+            rows_to_add.append(row_data)
+            existing_inputs.add(city.strip().lower())
+            next_row += 1
+        
+        if rows_to_add:
+            # Ensure sheet has enough rows
+            current_row_count = worksheet.row_count
+            required_rows = start_row + len(rows_to_add) + 10
+            
+            if required_rows > current_row_count:
+                worksheet.add_rows(max(len(rows_to_add) + 50, 100))
+            
+            # Write all rows at once
+            end_row = start_row + len(rows_to_add) - 1
+            worksheet.update(f'A{start_row}:F{end_row}', rows_to_add, value_input_option='USER_ENTERED')
+        
+        return True, len(rows_to_add), start_row
+    
+    except Exception as e:
+        if 'flush_errors' not in st.session_state:
+            st.session_state.flush_errors = []
+        st.session_state.flush_errors.append(f"Geocode write error: {str(e)}")
+        return False, 0, 0
+
+def read_geocode_results(city_names):
+    """
+    Read geocoding results from GeocodeLookup sheet for specified cities.
+    
+    Args:
+        city_names: List of city names to get results for
+        
+    Returns:
+        Dict mapping city_name -> {latitude, longitude, matched_name, success}
+    """
+    results = {}
+    
+    if not city_names:
+        return results
+    
+    try:
+        worksheet = get_geocode_lookup_sheet()
+        if not worksheet:
+            return results
+        
+        # Read all data
+        all_data = worksheet.get_all_values()
+        
+        # Build lookup for requested cities (case-insensitive)
+        city_lookup = {c.strip().lower(): c for c in city_names}
+        
+        for row in all_data[1:]:  # Skip header
+            if len(row) >= 4:
+                input_city = row[0].strip()
+                input_lower = input_city.lower()
+                
+                if input_lower in city_lookup:
+                    original_name = city_lookup[input_lower]
+                    lat_str = row[1] if len(row) > 1 else ''
+                    lon_str = row[2] if len(row) > 2 else ''
+                    matched_name = row[3] if len(row) > 3 else ''
+                    
+                    # Check if we have valid results
+                    try:
+                        lat = float(lat_str) if lat_str else None
+                        lon = float(lon_str) if lon_str else None
+                        
+                        if lat and lon and matched_name:
+                            results[original_name] = {
+                                'latitude': lat,
+                                'longitude': lon,
+                                'matched_name': matched_name.strip(),
+                                'success': True
+                            }
+                        else:
+                            results[original_name] = {
+                                'latitude': None,
+                                'longitude': None,
+                                'matched_name': None,
+                                'success': False
+                            }
+                    except (ValueError, TypeError):
+                        results[original_name] = {
+                            'latitude': None,
+                            'longitude': None,
+                            'matched_name': None,
+                            'success': False
+                        }
+        
+        return results
+    
+    except Exception as e:
+        return results
+
+def clear_geocode_lookup_sheet():
+    """Clear all data from GeocodeLookup sheet except headers."""
+    try:
+        worksheet = get_geocode_lookup_sheet()
+        if worksheet:
+            # Get row count, clear data rows but keep header
+            row_count = worksheet.row_count
+            if row_count > 1:
+                worksheet.delete_rows(2, row_count)
+            return True
+    except Exception as e:
+        pass
+    return False
+
 def log_city_match(original_input, matched_canonical, match_type, confidence, 
                    latitude=None, longitude=None, province=None, region=None, 
                    user='', source='bulk_upload', immediate=True):
@@ -2563,6 +2754,7 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False, check_
         should_log = True
         
         # If check_history is True, only log if at least one city has historical data
+        # (Used by Master Grid to avoid logging routes where neither city has any history)
         if check_history:
             pickup_has_history = pickup_ar in VALID_CITIES_AR or p_can in VALID_CITIES_AR
             dest_has_history = dest_ar in VALID_CITIES_AR or d_can in VALID_CITIES_AR
@@ -3274,9 +3466,49 @@ with tab2:
                             # Move to next step
                             if unmatched_cities:
                                 # Run fuzzy matching for all unmatched
+                                fuzzy_results = {}
                                 if RAPIDFUZZ_AVAILABLE:
                                     fuzzy_results = batch_fuzzy_match_cities(list(unmatched_cities.keys()), threshold=80)
                                     st.session_state.bulk_wizard_data['fuzzy_results'] = fuzzy_results
+                                
+                                # ============================================
+                                # GOOGLE GEOCODING FOR CITIES WITHOUT FUZZY MATCH
+                                # ============================================
+                                # Find cities that don't have a good fuzzy match
+                                cities_needing_geocode = []
+                                for city_name in unmatched_cities.keys():
+                                    fuzzy = fuzzy_results.get(city_name, {})
+                                    # If no fuzzy match or low confidence, try Google geocoding
+                                    if not fuzzy.get('match_found') or fuzzy.get('confidence', 0) < 80:
+                                        cities_needing_geocode.append(city_name)
+                                
+                                if cities_needing_geocode:
+                                    # Write to GeocodeLookup sheet for Google Maps API
+                                    status_placeholder = st.empty()
+                                    status_placeholder.info(f"🌍 Geocoding {len(cities_needing_geocode)} cities via Google Maps...")
+                                    
+                                    success, count_written, start_row = write_cities_for_geocoding(cities_needing_geocode)
+                                    
+                                    if success and count_written > 0:
+                                        # Wait for Google API to process (3-5 seconds)
+                                        import time
+                                        status_placeholder.info(f"⏳ Waiting for Google Maps API to process {count_written} cities...")
+                                        time.sleep(4)  # Wait 4 seconds for formulas to calculate
+                                        
+                                        # Read back results
+                                        google_results = read_geocode_results(cities_needing_geocode)
+                                        st.session_state.bulk_wizard_data['google_suggestions'] = google_results
+                                        
+                                        # Count successful geocodes
+                                        successful = sum(1 for r in google_results.values() if r.get('success'))
+                                        status_placeholder.success(f"✅ Google found {successful}/{len(cities_needing_geocode)} city suggestions")
+                                    else:
+                                        st.session_state.bulk_wizard_data['google_suggestions'] = {}
+                                        if not success:
+                                            status_placeholder.warning("⚠️ Could not connect to Google Sheets for geocoding")
+                                else:
+                                    st.session_state.bulk_wizard_data['google_suggestions'] = {}
+                                
                                 st.session_state.bulk_wizard_step = 1
                             else:
                                 # No unmatched cities, skip to distance review
@@ -3381,7 +3613,15 @@ with tab2:
                                     for m in all_matches[1:4]:
                                         st.caption(f"• {to_english_city(m['canonical'])} ({m['score']}%)")
                         else:
-                            st.error("❌ No good match found - please provide coordinates for a new city")
+                            # No fuzzy match - check for Google suggestion
+                            google_suggestions = wizard_data.get('google_suggestions', {})
+                            google_result = google_suggestions.get(city_name, {})
+                            
+                            if google_result.get('success'):
+                                st.info(f"🌍 **Google Maps suggestion:** {google_result.get('matched_name', 'Unknown')}")
+                                st.caption(f"📍 Coordinates: {google_result.get('latitude'):.5f}, {google_result.get('longitude'):.5f}")
+                            else:
+                                st.error("❌ No match found - please provide coordinates for a new city")
                     
                     with col2:
                         # Resolution options
@@ -3424,30 +3664,92 @@ with tab2:
                                         'region': region
                                     }
                         else:
-                            # No fuzzy match - must provide coordinates
-                            st.markdown("**Add as new city:**")
-                            lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
-                            lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
+                            # No fuzzy match - check for Google suggestion
+                            google_suggestions = wizard_data.get('google_suggestions', {})
+                            google_result = google_suggestions.get(city_name, {})
                             
-                            if lat != 0 and lon != 0:
-                                province, region = get_province_from_coordinates(lat, lon)
-                                if province:
-                                    st.success(f"📍 Detected: {province} → {region}")
-                                else:
-                                    st.warning("Could not detect province from coordinates")
-                                    region = st.selectbox("Select Region", 
-                                                         options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
-                                                         key=f"region_{idx}")
-                                    province = None
+                            if google_result.get('success'):
+                                # Pre-fill with Google's coordinates
+                                default_lat = google_result.get('latitude', 0.0)
+                                default_lon = google_result.get('longitude', 0.0)
+                                google_name = google_result.get('matched_name', city_name)
                                 
-                                st.session_state.city_resolutions[city_name] = {
-                                    'type': 'new_city',
-                                    'canonical': city_name,
-                                    'latitude': lat,
-                                    'longitude': lon,
-                                    'province': province,
-                                    'region': region
-                                }
+                                accept_google = st.checkbox(
+                                    f"✅ Accept Google suggestion: **{google_name}**", 
+                                    value=True,
+                                    key=f"accept_google_{idx}"
+                                )
+                                
+                                if accept_google:
+                                    # Auto-detect province from Google coordinates
+                                    province, region = get_province_from_coordinates(default_lat, default_lon)
+                                    if province:
+                                        st.success(f"📍 {province} → {region}")
+                                    else:
+                                        region = st.selectbox("Select Region", 
+                                                             options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
+                                                             key=f"region_{idx}")
+                                        province = None
+                                    
+                                    st.session_state.city_resolutions[city_name] = {
+                                        'type': 'google_match',
+                                        'canonical': google_name,
+                                        'latitude': default_lat,
+                                        'longitude': default_lon,
+                                        'province': province,
+                                        'region': region,
+                                        'original_input': city_name
+                                    }
+                                else:
+                                    # User wants to override - show manual input
+                                    st.markdown("**Override with different coordinates:**")
+                                    lat = st.number_input("Latitude", key=f"lat_{idx}", value=default_lat, format="%.6f")
+                                    lon = st.number_input("Longitude", key=f"lon_{idx}", value=default_lon, format="%.6f")
+                                    
+                                    if lat != 0 and lon != 0:
+                                        province, region = get_province_from_coordinates(lat, lon)
+                                        if province:
+                                            st.success(f"📍 Detected: {province} → {region}")
+                                        else:
+                                            st.warning("Could not detect province from coordinates")
+                                            region = st.selectbox("Select Region", 
+                                                                 options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
+                                                                 key=f"region_{idx}")
+                                            province = None
+                                        
+                                        st.session_state.city_resolutions[city_name] = {
+                                            'type': 'new_city',
+                                            'canonical': city_name,
+                                            'latitude': lat,
+                                            'longitude': lon,
+                                            'province': province,
+                                            'region': region
+                                        }
+                            else:
+                                # No Google match either - must enter manually
+                                st.markdown("**Add as new city:**")
+                                lat = st.number_input("Latitude", key=f"lat_{idx}", value=0.0, format="%.6f")
+                                lon = st.number_input("Longitude", key=f"lon_{idx}", value=0.0, format="%.6f")
+                                
+                                if lat != 0 and lon != 0:
+                                    province, region = get_province_from_coordinates(lat, lon)
+                                    if province:
+                                        st.success(f"📍 Detected: {province} → {region}")
+                                    else:
+                                        st.warning("Could not detect province from coordinates")
+                                        region = st.selectbox("Select Region", 
+                                                             options=['Eastern', 'Western', 'Central', 'Northern', 'Southern'],
+                                                             key=f"region_{idx}")
+                                        province = None
+                                    
+                                    st.session_state.city_resolutions[city_name] = {
+                                        'type': 'new_city',
+                                        'canonical': city_name,
+                                        'latitude': lat,
+                                        'longitude': lon,
+                                        'province': province,
+                                        'region': region
+                                    }
         
         # Check if all resolved (including ignored)
         resolved_count = len(st.session_state.city_resolutions)
@@ -3566,6 +3868,51 @@ with tab2:
                                 latitude=resolution.get('latitude'),
                                 longitude=resolution.get('longitude'),
                                 source='new_city',
+                                user=username,
+                                immediate=False
+                            )
+                        elif resolution['type'] == 'google_match':
+                            # Google Maps geocoded match
+                            log_city_match(
+                                original_input=city_name,
+                                matched_canonical=resolution['canonical'],
+                                match_type='Google Maps Match',
+                                confidence=None,
+                                latitude=resolution.get('latitude'),
+                                longitude=resolution.get('longitude'),
+                                province=resolution.get('province'),
+                                region=resolution.get('region'),
+                                user=username,
+                                source='google_geocode',
+                                immediate=False
+                            )
+                            new_entries.append({
+                                'variant': city_name,
+                                'canonical': resolution['canonical'],
+                                'region': resolution.get('region'),
+                                'province': resolution.get('province'),
+                                'latitude': resolution.get('latitude'),
+                                'longitude': resolution.get('longitude')
+                            })
+                            # Also add the Google-matched name as a variant if different
+                            if resolution['canonical'] != city_name:
+                                new_entries.append({
+                                    'variant': resolution['canonical'],
+                                    'canonical': resolution['canonical'],
+                                    'region': resolution.get('region'),
+                                    'province': resolution.get('province'),
+                                    'latitude': resolution.get('latitude'),
+                                    'longitude': resolution.get('longitude')
+                                })
+                            # Log to Append sheet
+                            log_to_append_sheet(
+                                variant=city_name,
+                                canonical=resolution['canonical'],
+                                region=resolution.get('region'),
+                                province=resolution.get('province'),
+                                latitude=resolution.get('latitude'),
+                                longitude=resolution.get('longitude'),
+                                source='google_geocode',
                                 user=username,
                                 immediate=False
                             )

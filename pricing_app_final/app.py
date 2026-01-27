@@ -4034,17 +4034,31 @@ with tab2:
                             if v['distance'] > 0 and v['source'] != 'Missing'}
         
         # UI: Dashboard Stats - Aligned with bottom navigation [1, 1, 1], centered
+        # CSS to center metrics within their columns
+        st.markdown("""
+        <style>
+            [data-testid="stMetric"] {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+            }
+            [data-testid="stMetricLabel"] {
+                justify-content: center;
+            }
+            [data-testid="stMetricValue"] {
+                justify-content: center;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
         c_stat1, c_stat2, c_refresh = st.columns([1, 1, 1])
         
         with c_stat1:
-            st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
             st.metric("⚠️ Missing Distances", len(missing_distances))
-            st.markdown("</div>", unsafe_allow_html=True)
         
         with c_stat2:
-            st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
             st.metric("✅ Ready to Price", len(existing_distances))
-            st.markdown("</div>", unsafe_allow_html=True)
         
         with c_refresh:
             st.markdown("<br>", unsafe_allow_html=True)  # Align with metrics

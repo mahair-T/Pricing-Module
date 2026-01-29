@@ -3561,10 +3561,44 @@ with tab1:
         st.markdown("---")
         with st.expander("🔮 Model Predictions Comparison", expanded=False):
             model_df = []
+            truck_type_for_comparison = result.get('Truck_Type', 'Domestic')
+            
             if 'IndexShrink_Price' in result and result['IndexShrink_Price']:
-                model_df.append({'Model': result['IndexShrink_Method'], 'Prediction': f"{result['IndexShrink_Price']:,.0f} SAR", 'Upper Bound': f"{result['IndexShrink_Upper']:,.0f} SAR"})
+                idx_price = result['IndexShrink_Price']
+                idx_upper = result['IndexShrink_Upper']
+                # Apply port transform if not Domestic
+                if truck_type_for_comparison != 'Domestic' and PORT_MODEL:
+                    idx_price = apply_port_transform(idx_price, truck_type_for_comparison)
+                    idx_upper = apply_port_transform(idx_upper, truck_type_for_comparison) if idx_upper else None
+                model_df.append({
+                    'Model': f"{result['IndexShrink_Method']}" + (f" + Port" if truck_type_for_comparison != 'Domestic' else ""), 
+                    'Prediction': f"{idx_price:,.0f} SAR", 
+                    'Upper Bound': f"{idx_upper:,.0f} SAR" if idx_upper else "—"
+                })
             if 'Blend_Price' in result and result['Blend_Price']:
-                model_df.append({'Model': result['Blend_Method'], 'Prediction': f"{result['Blend_Price']:,.0f} SAR", 'Upper Bound': f"{result['Blend_Upper']:,.0f} SAR"})
+                blend_price = result['Blend_Price']
+                blend_upper = result['Blend_Upper']
+                # Apply port transform if not Domestic
+                if truck_type_for_comparison != 'Domestic' and PORT_MODEL:
+                    blend_price = apply_port_transform(blend_price, truck_type_for_comparison)
+                    blend_upper = apply_port_transform(blend_upper, truck_type_for_comparison) if blend_upper else None
+                model_df.append({
+                    'Model': f"{result['Blend_Method']}" + (f" + Port" if truck_type_for_comparison != 'Domestic' else ""), 
+                    'Prediction': f"{blend_price:,.0f} SAR", 
+                    'Upper Bound': f"{blend_upper:,.0f} SAR" if blend_upper else "—"
+                })
+            if 'Spatial_Price' in result and result['Spatial_Price']:
+                spatial_price = result['Spatial_Price']
+                spatial_upper = result.get('Spatial_Upper')
+                # Apply port transform if not Domestic
+                if truck_type_for_comparison != 'Domestic' and PORT_MODEL:
+                    spatial_price = apply_port_transform(spatial_price, truck_type_for_comparison)
+                    spatial_upper = apply_port_transform(spatial_upper, truck_type_for_comparison) if spatial_upper else None
+                model_df.append({
+                    'Model': f"{result['Spatial_Method']}" + (f" + Port" if truck_type_for_comparison != 'Domestic' else ""), 
+                    'Prediction': f"{spatial_price:,.0f} SAR", 
+                    'Upper Bound': f"{spatial_upper:,.0f} SAR" if spatial_upper else "—"
+                })
             if model_df: st.dataframe(pd.DataFrame(model_df), use_container_width=True, hide_index=True)
             
         if not result['Is_Rare_Lane']:
@@ -3848,16 +3882,18 @@ with tab2:
                 st.markdown("<h5 style='text-align: center;'>Select Freight Segment</h5>", unsafe_allow_html=True)
                 st.markdown("<p style='text-align: center; font-size: 0.85rem; color: gray;'>Freight segment applies port pricing transform to all routes in this batch</p>", unsafe_allow_html=True)
                 
-                # Single select using horizontal radio
-                selected_truck_type = st.radio(
-                    "Freight Segment:", 
-                    options=TRUCK_TYPES, 
-                    index=0, 
-                    horizontal=True,
-                    key='bulk_truck_type',
-                    label_visibility='collapsed',
-                    help="Domestic: Standard pricing | Port Direct/Indirect: Apply port pricing transform"
-                )
+                # Center the radio buttons using columns
+                _, center_col, _ = st.columns([1, 2, 1])
+                with center_col:
+                    selected_truck_type = st.radio(
+                        "Freight Segment:", 
+                        options=TRUCK_TYPES, 
+                        index=0, 
+                        horizontal=True,
+                        key='bulk_truck_type',
+                        label_visibility='collapsed',
+                        help="Domestic: Standard pricing | Port Direct/Indirect: Apply port pricing transform"
+                    )
 
 
                 st.markdown("<br>", unsafe_allow_html=True)

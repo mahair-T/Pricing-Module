@@ -3133,7 +3133,8 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             
             # Filter port data for this lane and load type
             port_lane_data = df_port[
-                (df_port['pickup_city'] == pickup_ar) & 
+                (df_port['pickup_city'] == pickup_ar) &
+                (df_port['destination_city'] == dest_ar) &
                 (df_port['load_type'] == load_type_filter)
             ].copy()
             

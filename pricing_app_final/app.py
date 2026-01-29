@@ -3882,28 +3882,30 @@ with tab2:
                 st.markdown("<h5 style='text-align: center;'>Select Freight Segment</h5>", unsafe_allow_html=True)
                 st.markdown("<p style='text-align: center; font-size: 0.85rem; color: gray;'>Freight segment applies port pricing transform to all routes in this batch</p>", unsafe_allow_html=True)
                 
-                # Center the radio buttons using columns and CSS
-                st.markdown("""
-                    <style>
-                        /* Target the radio group and center its flex items */
-                        [data-testid="stRadio"] > div[role="radiogroup"] {
-                            justify-content: center !important;
-                        }
-                    </style>
-                """, unsafe_allow_html=True)
+                # Use columns like the vehicle checkboxes above
+                seg_cols = st.columns([1, 1, 1, 1, 1])  # 5 columns: spacer + 3 options + spacer
                 
-                # Use columns to constrain width and center
-                spacer_left, radio_col, spacer_right = st.columns([1, 2, 1])
-                with radio_col:
-                    selected_truck_type = st.radio(
-                        "Freight Segment:", 
-                        options=TRUCK_TYPES, 
-                        index=0, 
-                        horizontal=True,
-                        key='bulk_truck_type',
-                        label_visibility='collapsed',
-                        help="Domestic: Standard pricing | Port Direct/Indirect: Apply port pricing transform"
-                    )
+                # Initialize the selected truck type in session state if not present
+                if 'bulk_truck_type' not in st.session_state:
+                    st.session_state.bulk_truck_type = 'Domestic'
+                
+                with seg_cols[1]:
+                    if st.button("🏠 Domestic", use_container_width=True, 
+                                 type="primary" if st.session_state.bulk_truck_type == 'Domestic' else "secondary"):
+                        st.session_state.bulk_truck_type = 'Domestic'
+                        st.rerun()
+                with seg_cols[2]:
+                    if st.button("🚢 Port Direct", use_container_width=True,
+                                 type="primary" if st.session_state.bulk_truck_type == 'Port Direct' else "secondary"):
+                        st.session_state.bulk_truck_type = 'Port Direct'
+                        st.rerun()
+                with seg_cols[3]:
+                    if st.button("📦 Port Indirect", use_container_width=True,
+                                 type="primary" if st.session_state.bulk_truck_type == 'Port Indirect' else "secondary"):
+                        st.session_state.bulk_truck_type = 'Port Indirect'
+                        st.rerun()
+                
+                selected_truck_type = st.session_state.bulk_truck_type
 
 
                 st.markdown("<br>", unsafe_allow_html=True)

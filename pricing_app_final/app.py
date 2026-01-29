@@ -2169,6 +2169,12 @@ VEHICLE_TYPE_AR = {v: k for k, v in VEHICLE_TYPE_EN.items()}
 DEFAULT_VEHICLE_AR = 'تريلا فرش'
 DEFAULT_VEHICLE_EN = 'Flatbed Trailer'
 
+# ============================================
+# TRUCK TYPES (Domestic vs Port Pricing)
+# ============================================
+TRUCK_TYPES = ['Domestic', 'Port Direct', 'Port Indirect']
+DEFAULT_TRUCK_TYPE = 'Domestic'
+
 def to_english_vehicle(vtype_ar):
     return VEHICLE_TYPE_EN.get(vtype_ar, vtype_ar)
 
@@ -2596,6 +2602,13 @@ def load_models():
             spatial_predictor = SpatialPredictor(spatial_artifacts)
             break
     
+    # Load Port Pricing model (linear transforms for port loads)
+    port_model = None
+    port_model_path = os.path.join(MODEL_DIR, 'port_pricing_model.pkl')
+    if os.path.exists(port_model_path):
+        with open(port_model_path, 'rb') as f:
+            port_model = pickle.load(f)
+    
     # Build Regional predictor as ultimate fallback (from config data)
     regional_predictor = None
     city_to_region = config.get('city_to_region', {})
@@ -2612,7 +2625,8 @@ def load_models():
         'distance_matrix': distance_matrix,
         'index_shrink_predictor': index_shrink_predictor,
         'spatial_predictor': spatial_predictor,
-        'regional_predictor': regional_predictor
+        'regional_predictor': regional_predictor,
+        'port_model': port_model
     }
 
 models = load_models()
@@ -2622,6 +2636,7 @@ DISTANCE_MATRIX = models['distance_matrix']
 index_shrink_predictor = models['index_shrink_predictor']
 spatial_predictor = models['spatial_predictor']
 regional_predictor = models['regional_predictor']
+PORT_MODEL = models['port_model']
 
 FEATURES = config['FEATURES']
 ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
@@ -2797,6 +2812,38 @@ def calculate_rental_cost(distance_km):
     if not distance_km or distance_km <= 0: return None
     days = distance_km / RENTAL_KM_PER_DAY
     return round((1.0 if days < 1 else round(days * 2) / 2) * RENTAL_COST_PER_DAY, 0)
+
+def apply_port_transform(domestic_price, truck_type):
+    """
+    Apply port pricing linear transform.
+    Port = alpha × Domestic + beta
+    
+    Args:
+        domestic_price: Base domestic price (SAR)
+        truck_type: 'Domestic', 'Port Direct', or 'Port Indirect'
+    
+    Returns:
+        Transformed price (same as domestic if Domestic type or no port model)
+    """
+    if domestic_price is None or domestic_price <= 0:
+        return domestic_price
+    
+    if truck_type == 'Domestic' or not PORT_MODEL:
+        return domestic_price
+    
+    transforms = PORT_MODEL.get('recommended', {})
+    
+    if truck_type == 'Port Direct':
+        params = transforms.get('Direct', transforms.get('fallback', {}))
+    elif truck_type == 'Port Indirect':
+        params = transforms.get('Trip', transforms.get('fallback', {}))
+    else:
+        return domestic_price
+    
+    alpha = params.get('alpha', 1.0)
+    beta = params.get('beta', 0)
+    
+    return round(alpha * domestic_price + beta)
 
 def calculate_reference_sell(pickup_ar, dest_ar, vehicle_ar, lane_data, recommended_sell):
     """
@@ -2999,7 +3046,7 @@ def get_ammunition_loads(lane, vehicle_ar, commodity=None):
         same, other = (matches[matches['commodity'] == mode], matches[matches['commodity'] != mode]) if mode else (pd.DataFrame(), pd.DataFrame())
     return select_spaced_samples(same, 5), select_spaced_samples(other, 5)
 
-def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weight=None):
+def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weight=None, truck_type='Domestic'):
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane = f"{pickup_ar} → {dest_ar}"
     lane_data = df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == vehicle_ar)].copy()
@@ -3031,19 +3078,33 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     
     pricing = calculate_prices(pickup_ar, dest_ar, vehicle_ar, dist, lane_data, weight=weight)
     
+    # Apply port pricing transform if not Domestic
+    buy_price = pricing['buy_price']
+    sell_price = pricing['sell_price']
+    model_used = pricing['model_used']
+    
+    if truck_type != 'Domestic' and PORT_MODEL:
+        buy_price = apply_port_transform(buy_price, truck_type)
+        # Apply margin after port transform
+        if buy_price:
+            _, margin, _ = get_backhaul_probability(dest_ar)
+            sell_price = round(buy_price * (1 + margin))
+        model_used = f"{model_used} + Port Transform"
+    
     res = {
+        'Truck_Type': truck_type,
         'Vehicle_Type': to_english_vehicle(vehicle_ar), 'Commodity': to_english_commodity(commodity),
         'Weight_Tons': round(weight, 1), 'Distance_km': round(dist, 0), 'Distance_Source': dist_src,
         'Hist_Count': h_count, 'Hist_Min': h_min, 'Hist_Median': h_med, 'Hist_Max': h_max,
         f'Recent_{RECENCY_WINDOW}d_Count': r_count, f'Recent_{RECENCY_WINDOW}d_Min': r_min, f'Recent_{RECENCY_WINDOW}d_Median': r_med, f'Recent_{RECENCY_WINDOW}d_Max': r_max,
         'Hist_Sell_Min': hs_min, 'Hist_Sell_Median': hs_med, 'Hist_Sell_Max': hs_max,
         f'Recent_{RECENCY_WINDOW}d_Sell_Min': rs_min, f'Recent_{RECENCY_WINDOW}d_Sell_Median': rs_med, f'Recent_{RECENCY_WINDOW}d_Sell_Max': rs_max,
-        'Buy_Price': pricing['buy_price'], 'Rec_Sell_Price': pricing['sell_price'],
+        'Buy_Price': buy_price, 'Rec_Sell_Price': sell_price,
         'Ref_Sell_Price': pricing['ref_sell_price'], 'Ref_Sell_Source': pricing['ref_sell_source'],
         'Rental_Cost': pricing['rental_cost'], 'Target_Margin': pricing['target_margin'],
         'Backhaul_Probability': pricing['backhaul_probability'], 'Backhaul_Ratio': pricing['backhaul_ratio'],
-        'Model_Used': pricing['model_used'], 'Confidence': pricing['confidence'],
-        'Cost_Per_KM': round(pricing['buy_price']/dist, 2) if pricing['buy_price'] and dist > 0 else None,
+        'Model_Used': model_used, 'Confidence': pricing['confidence'],
+        'Cost_Per_KM': round(buy_price/dist, 2) if buy_price and dist > 0 else None,
         'Is_Rare_Lane': r_count == 0
     }
     
@@ -3056,7 +3117,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     return res
 
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, check_history=False,
-                       pickup_region_override=None, dest_region_override=None, weight=None):
+                       pickup_region_override=None, dest_region_override=None, weight=None, truck_type='Domestic'):
     """
     Lookup route stats for bulk pricing - uses batch logging (immediate_log=False).
     
@@ -3070,6 +3131,7 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
         pickup_region_override: If provided, use this region for pickup (from coordinates)
         dest_region_override: If provided, use this region for destination (from coordinates)
         weight: Weight in tons (optional, used for vehicle sizing logic)
+        truck_type: 'Domestic', 'Port Direct', or 'Port Indirect' (default: 'Domestic')
     """
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
@@ -3086,17 +3148,32 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
                                pickup_region_override=pickup_region_override,
                                dest_region_override=dest_region_override,
                                weight=weight)
+    
+    # Apply port pricing transform if not Domestic
+    buy_price = pricing['buy_price']
+    sell_price = pricing['sell_price']
+    model_used = pricing['model_used']
+    
+    if truck_type != 'Domestic' and PORT_MODEL:
+        buy_price = apply_port_transform(buy_price, truck_type)
+        # Apply margin after port transform
+        if buy_price:
+            _, margin, _ = get_backhaul_probability(dest_ar)
+            sell_price = round(buy_price * (1 + margin))
+        model_used = f"{model_used} + Port Transform"
+    
     return {
         'From': to_english_city(pickup_ar), 
         'To': to_english_city(dest_ar), 
+        'Truck_Type': truck_type,
         'Vehicle': to_english_vehicle(vehicle_ar), 
         'Weight_Tons': weight if weight else 25.0,
         'Distance': int(dist) if dist else 0,
         'Distance_Source': dist_source,
-        'Buy_Price': pricing['buy_price'], 'Rec_Sell': pricing['sell_price'],
+        'Buy_Price': buy_price, 'Rec_Sell': sell_price,
         'Ref_Sell': pricing['ref_sell_price'], 'Ref_Sell_Src': pricing['ref_sell_source'],
         'Rental_Cost': pricing['rental_cost'], 'Margin': pricing['target_margin'],
-        'Model': pricing['model_used'], 'Confidence': pricing['confidence'], 'Recent_N': pricing['recent_count']
+        'Model': model_used, 'Confidence': pricing['confidence'], 'Recent_N': pricing['recent_count']
     }
                            
 # ============================================
@@ -3107,8 +3184,9 @@ model_status = []
 if index_shrink_predictor: model_status.append("✅ Index+Shrink (90d HL)")
 if spatial_predictor: model_status.append("✅ Spatial R150 IDW")
 if regional_predictor: model_status.append("✅ Regional Fallback")
+if PORT_MODEL: model_status.append("✅ Port Pricing")
 dist_status = f"✅ {len(DISTANCE_MATRIX):,} distances" if DISTANCE_MATRIX else ""
-st.caption(f"ML-powered pricing | Domestic | {' | '.join(model_status)} | {dist_status}")
+st.caption(f"ML-powered pricing | Domestic + Port | {' | '.join(model_status)} | {dist_status}")
 
 # Warning for cities in historical data but not in normalization CSV
 if CITIES_WITHOUT_REGIONS:
@@ -3144,9 +3222,11 @@ with tab1:
         st.session_state.single_dest = 'Riyadh' if 'Riyadh' in dest_cities_en else dest_cities_en[0]
     if 'single_vehicle' not in st.session_state:
         st.session_state.single_vehicle = DEFAULT_VEHICLE_EN if DEFAULT_VEHICLE_EN in vehicle_types_en else vehicle_types_en[0]
+    if 'single_truck_type' not in st.session_state:
+        st.session_state.single_truck_type = DEFAULT_TRUCK_TYPE
     
     # Use columns with swap button in the middle
-    col1, col_swap, col2, col3 = st.columns([3, 0.5, 3, 3])
+    col1, col_swap, col2, col3, col4 = st.columns([3, 0.5, 3, 2.5, 2])
     with col1:
         pickup_en = st.selectbox("Pickup City", options=pickup_cities_en, key='single_pickup')
         pickup_city = to_arabic_city(pickup_en)
@@ -3159,6 +3239,9 @@ with tab1:
     with col3:
         vehicle_en = st.selectbox("Vehicle Type", options=vehicle_types_en, key='single_vehicle')
         vehicle_type = to_arabic_vehicle(vehicle_en)
+    with col4:
+        truck_type = st.selectbox("🚣 Truck Type", options=TRUCK_TYPES, key='single_truck_type', 
+                                   help="Domestic: Standard pricing | Port Direct/Indirect: Port pricing transform")
 
     st.subheader("📦 Optional Details")
     col1, col2, col3 = st.columns(3)
@@ -3173,13 +3256,15 @@ with tab1:
 
     st.markdown("---")
     if st.button("🎯 Generate Pricing", type="primary", use_container_width=True, key='single_generate'):
-        result = price_single_route(pickup_city, destination_city, vehicle_type, comm_in, weight)
+        result = price_single_route(pickup_city, destination_city, vehicle_type, comm_in, weight, truck_type)
         st.session_state.last_result, st.session_state.last_lane = result, {'pickup_ar': pickup_city, 'dest_ar': destination_city, 'pickup_en': pickup_en, 'dest_en': dest_en}
         
         if result['Distance_km'] == 0 or result['Distance_Source'] == 'Default': st.error(f"⚠️ Distance data missing or estimated ({result['Distance_km']} km)")
         
         st.header("💰 Pricing Results")
-        st.info(f"**{pickup_en} → {dest_en}** | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
+        truck_type_display = result.get('Truck_Type', 'Domestic')
+        truck_icon = "🏠" if truck_type_display == 'Domestic' else "🚢"
+        st.info(f"**{pickup_en} → {dest_en}** | {truck_icon} {truck_type_display} | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🛒 BUY PRICE", f"{result['Buy_Price']:,} SAR" if result['Buy_Price'] else "N/A")
@@ -3393,7 +3478,7 @@ with tab2:
         st.markdown("""
         <div style='text-align: center; margin-bottom: 10px;'>
         Prepare your CSV with the following columns (order matters, names ignored):<br>
-        <b>1. Pickup City</b> &nbsp;|&nbsp; <b>2. Destination City</b> &nbsp;|&nbsp; <b>3. Distance</b> (Optional) &nbsp;|&nbsp; <b>4. Vehicle</b> (Optional)
+        <b>1. Pickup City</b> &nbsp;|&nbsp; <b>2. Destination City</b> &nbsp;|&nbsp; <b>3. Vehicle</b> (Optional) &nbsp;|&nbsp; <b>4. Distance</b> (Optional)
         </div>
         """, unsafe_allow_html=True)
         
@@ -3404,8 +3489,8 @@ with tab2:
                 template_df = pd.DataFrame({
                     'Pickup': ['Jeddah', 'Riyadh', 'Unknown City'], 
                     'Destination': ['Riyadh', 'Dammam', 'Jeddah'], 
-                    'Distance': ['', '', '450'],
-                    'Vehicle_Type': ['Flatbed Trailer', '', '']
+                    'Vehicle_Type': ['Flatbed Trailer', '', ''],
+                    'Distance': ['', '', '450']
                 })
                 success, msg = populate_rfq_template_sheet(template_df)
                 if success:
@@ -3460,6 +3545,30 @@ with tab2:
                     st.warning("⚠️ Please select at least one vehicle type.")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
+                
+                # 3b. Truck Type Selection (Port Pricing)
+                st.markdown("<h5 style='text-align: center;'>🚣 Select Truck Type</h5>", unsafe_allow_html=True)
+                st.caption("Truck type applies port pricing transform to all routes in this batch")
+                
+                t_cols = st.columns(3)
+                with t_cols[0]:
+                    truck_domestic = st.radio("", options=['Domestic'], key='bulk_truck_domestic', label_visibility='collapsed')
+                with t_cols[1]:
+                    truck_direct = st.radio("", options=['Port Direct'], key='bulk_truck_direct', label_visibility='collapsed')
+                with t_cols[2]:
+                    truck_indirect = st.radio("", options=['Port Indirect'], key='bulk_truck_indirect', label_visibility='collapsed')
+                
+                # Single select logic using radio
+                selected_truck_type = st.radio(
+                    "Select one:", 
+                    options=TRUCK_TYPES, 
+                    index=0, 
+                    horizontal=True,
+                    key='bulk_truck_type',
+                    help="Domestic: Standard pricing | Port Direct/Indirect: Apply port pricing transform"
+                )
+
+                st.markdown("<br>", unsafe_allow_html=True)
 
                 # 4. Action Buttons (Equal Width for balance)
                 btn_col1, btn_col2 = st.columns(2)
@@ -3488,20 +3597,20 @@ with tab2:
                                 p_raw = str(row.iloc[0]).strip() if len(row) > 0 else ''
                                 d_raw = str(row.iloc[1]).strip() if len(row) > 1 else ''
                                 
-                                # Parse distance
-                                dist_override = None
+                                # Parse vehicle (column 3 - NEW ORDER)
+                                v_raw = ''
                                 if len(row) > 2:
+                                    v_raw = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ''
+                                
+                                # Parse distance (column 4 - NEW ORDER)
+                                dist_override = None
+                                if len(row) > 3:
                                     try:
-                                        val = row.iloc[2]
+                                        val = row.iloc[3]
                                         if pd.notna(val) and str(val).strip() not in ['', 'nan', 'None']:
                                             dist_override = float(str(val).replace(',', '').strip())
                                     except (ValueError, TypeError):
                                         pass
-                                
-                                # Parse vehicle
-                                v_raw = ''
-                                if len(row) > 3:
-                                    v_raw = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ''
                                 
                                 # Normalize cities
                                 p_ar, p_ok = normalize_city(p_raw)
@@ -3555,6 +3664,7 @@ with tab2:
                             # Store in session state
                             st.session_state.bulk_wizard_data = {
                                 'username': username, 'selected_vehicles': selected_vehicles,
+                                'selected_truck_type': selected_truck_type,
                                 'parsed_rows': parsed_rows, 'unmatched_cities': unmatched_cities,
                                 'original_df': r_df
                             }
@@ -4338,6 +4448,7 @@ with tab2:
         wizard_data = st.session_state.bulk_wizard_data
         parsed_rows = wizard_data.get('parsed_rows', [])
         selected_vehicles = wizard_data.get('selected_vehicles', ['Flatbed Trailer'])
+        selected_truck_type = wizard_data.get('selected_truck_type', 'Domestic')
         final_distances = wizard_data.get('final_distances', {})
         username = wizard_data.get('username', '')
         ignored_rows = wizard_data.get('ignored_rows', set())
@@ -4383,7 +4494,8 @@ with tab2:
                         
                         result = lookup_route_stats(
                             pickup_ar, dest_ar, v_ar,
-                            dist_override=dist_override
+                            dist_override=dist_override,
+                            truck_type=selected_truck_type
                         )
                         result['CSV_Row'] = row['row_num']
                         results.append(result)

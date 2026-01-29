@@ -3099,19 +3099,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             sell_price = round_to_nearest(buy_price * (1 + margin), 50)
         model_used = f"{model_used} + Port Transform"
         
-        # Apply port transform to historical/recent prices for consistent display
-        disp_h_min = apply_port_transform(h_min, truck_type) if h_min else None
-        disp_h_med = apply_port_transform(h_med, truck_type) if h_med else None
-        disp_h_max = apply_port_transform(h_max, truck_type) if h_max else None
-        disp_r_min = apply_port_transform(r_min, truck_type) if r_min else None
-        disp_r_med = apply_port_transform(r_med, truck_type) if r_med else None
-        disp_r_max = apply_port_transform(r_max, truck_type) if r_max else None
-        disp_hs_min = apply_port_transform(hs_min, truck_type) if hs_min else None
-        disp_hs_med = apply_port_transform(hs_med, truck_type) if hs_med else None
-        disp_hs_max = apply_port_transform(hs_max, truck_type) if hs_max else None
-        disp_rs_min = apply_port_transform(rs_min, truck_type) if rs_min else None
-        disp_rs_med = apply_port_transform(rs_med, truck_type) if rs_med else None
-        disp_rs_max = apply_port_transform(rs_max, truck_type) if rs_max else None
+        # Note: Historical display values (disp_h_*, disp_r_*, etc.) are NOT transformed\n        # They already contain actual port prices as recorded in historical data
     
     res = {
         'Truck_Type': truck_type,

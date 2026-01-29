@@ -3290,16 +3290,28 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             else:
                 disp_r_min, disp_r_med, disp_r_max, r_count = None, None, None, 0
             
-            # Port data doesn't have shipper prices
-            disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
-            disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
+            # Check if port data has shipper prices (now included in updated port_reference_data.csv)
+            if 'total_shipper_price' in port_lane_data.columns and port_lane_data['total_shipper_price'].notna().any():
+                disp_hs_min = round(port_lane_data['total_shipper_price'].min(), 0)
+                disp_hs_med = round(port_lane_data['total_shipper_price'].median(), 0)
+                disp_hs_max = round(port_lane_data['total_shipper_price'].max(), 0)
+                if len(port_rec_data) > 0 and 'total_shipper_price' in port_rec_data.columns:
+                    disp_rs_min = round(port_rec_data['total_shipper_price'].min(), 0)
+                    disp_rs_med = round(port_rec_data['total_shipper_price'].median(), 0)
+                    disp_rs_max = round(port_rec_data['total_shipper_price'].max(), 0)
+                else:
+                    disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
+            else:
+                # Port data doesn't have shipper prices - set to None
+                disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
+                disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
         else:
-            # No port data found - set counts to 0 but keep transformed price
-            h_count, r_count = 0, 0
-            disp_h_min, disp_h_med, disp_h_max = None, None, None
-            disp_r_min, disp_r_med, disp_r_max = None, None, None
-            disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
-            disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
+            # No port data found - keep domestic display values but update counts
+            # This allows showing domestic reference data when using port transform
+            h_count = 0  # Indicate no port-specific data
+            r_count = 0
+            # Keep disp_h_*, disp_r_*, disp_hs_*, disp_rs_* as domestic values for reference
+            # But mark them as domestic-derived by not changing them
     
     res = {
         'Truck_Type': truck_type,

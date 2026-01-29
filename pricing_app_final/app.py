@@ -3091,10 +3091,12 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     
     if truck_type != 'Domestic' and PORT_MODEL:
         buy_price = apply_port_transform(buy_price, truck_type)
+        # Apply rounding consistent with domestic (buy to 100, sell to 50)
+        buy_price = round_to_nearest(buy_price, 100)
         # Apply margin after port transform
         if buy_price:
             _, margin, _ = get_backhaul_probability(dest_ar)
-            sell_price = round(buy_price * (1 + margin))
+            sell_price = round_to_nearest(buy_price * (1 + margin), 50)
         model_used = f"{model_used} + Port Transform"
         
         # Apply port transform to historical/recent prices for consistent display
@@ -3176,10 +3178,12 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
     
     if truck_type != 'Domestic' and PORT_MODEL:
         buy_price = apply_port_transform(buy_price, truck_type)
+        # Apply rounding consistent with domestic (buy to 100, sell to 50)
+        buy_price = round_to_nearest(buy_price, 100)
         # Apply margin after port transform
         if buy_price:
             _, margin, _ = get_backhaul_probability(dest_ar)
-            sell_price = round(buy_price * (1 + margin))
+            sell_price = round_to_nearest(buy_price * (1 + margin), 50)
         model_used = f"{model_used} + Port Transform"
     
     return {
@@ -3576,7 +3580,7 @@ with tab2:
                 
                 # 3b. Freight Segment Selection (Port Pricing)
                 st.markdown("<h5 style='text-align: center;'>Select Freight Segment</h5>", unsafe_allow_html=True)
-                st.caption("Freight segment applies port pricing transform to all routes in this batch")
+                st.markdown("<p style='text-align: center; font-size: 0.85rem; color: gray;'>Freight segment applies port pricing transform to all routes in this batch</p>", unsafe_allow_html=True)
                 
                 # Single select using horizontal radio
                 selected_truck_type = st.radio(

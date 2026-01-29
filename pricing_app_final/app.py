@@ -1159,22 +1159,23 @@ def get_bulk_adjustments_sheet():
             worksheet = spreadsheet.worksheet('Bulk Adjustments')
         except:
             # Create sheet with headers
-            worksheet = spreadsheet.add_worksheet(title='Bulk Adjustments', rows=1000, cols=15)
+            worksheet = spreadsheet.add_worksheet(title='Bulk Adjustments', rows=1000, cols=16)
             headers = [
                 'Timestamp', 'Row_Number', 'Pickup_City', 'Destination_City', 
-                'Pickup_EN', 'Destination_EN', 'User_Distance', 
+                'Pickup_EN', 'Destination_EN', 'Freight_Segment', 'User_Distance', 
                 'Pickup_Lat', 'Pickup_Lon', 'Dropoff_Lat', 'Dropoff_Lon',
                 'Detected_Pickup_Province', 'Detected_Dropoff_Province',
                 'Detected_Pickup_Region', 'Detected_Dropoff_Region'
             ]
-            worksheet.update('A1:O1', [headers])
+            worksheet.update('A1:P1', [headers])
         
         return worksheet
     except Exception as e:
         return None
 
 def log_bulk_adjustment(row_num, pickup_city, dest_city, pickup_en, dest_en, 
-                        user_distance=None, pickup_lat=None, pickup_lon=None, 
+                        freight_segment='Domestic', user_distance=None, 
+                        pickup_lat=None, pickup_lon=None, 
                         dropoff_lat=None, dropoff_lon=None,
                         pickup_province=None, dropoff_province=None,
                         pickup_region=None, dropoff_region=None):
@@ -1194,6 +1195,7 @@ def log_bulk_adjustment(row_num, pickup_city, dest_city, pickup_en, dest_en,
         dest_city,
         pickup_en,
         dest_en,
+        freight_segment,
         str(user_distance) if user_distance is not None else '',
         str(pickup_lat) if pickup_lat is not None else '',
         str(pickup_lon) if pickup_lon is not None else '',

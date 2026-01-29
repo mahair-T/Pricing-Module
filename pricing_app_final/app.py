@@ -2638,11 +2638,38 @@ spatial_predictor = models['spatial_predictor']
 regional_predictor = models['regional_predictor']
 PORT_MODEL = models['port_model']
 
+
 FEATURES = config['FEATURES']
 ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
 DISTANCE_LOOKUP = config.get('DISTANCE_LOOKUP', {})
 
 df_knn = df_knn[df_knn['entity_mapping'] == ENTITY_MAPPING].copy()
+
+# ============================================
+# LOAD PORT REFERENCE DATA (Actual Port Prices)
+# ============================================
+@st.cache_resource
+def load_port_reference_data():
+    """
+    Load port reference data containing actual historical port prices.
+    This data has real prices from port loads (Direct/Trip types).
+    """
+    port_csv_path = os.path.join(APP_DIR, 'port_reference_data.csv')
+    if os.path.exists(port_csv_path):
+        df = pd.read_csv(port_csv_path)
+        # Calculate days_ago for consistency with df_knn
+        if 'pickup_date' in df.columns:
+            df['pickup_date'] = pd.to_datetime(df['pickup_date'])
+            df['days_ago'] = (pd.Timestamp.now() - df['pickup_date']).dt.days
+        # Create lane column for lookups
+        if 'effective_lane' in df.columns:
+            df['lane'] = df['effective_lane']
+        elif 'pickup_city' in df.columns and 'effective_dest' in df.columns:
+            df['lane'] = df['pickup_city'] + ' → ' + df['effective_dest']
+        return df
+    return pd.DataFrame()
+
+df_port = load_port_reference_data()
 
 # ============================================
 # FILTER OUT BAD/INVALID CITY NAMES FROM HISTORICAL DATA
@@ -3099,7 +3126,48 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             sell_price = round_to_nearest(buy_price * (1 + margin), 50)
         model_used = f"{model_used} + Port Transform"
         
-        # Note: Historical display values (disp_h_*, disp_r_*, etc.) are NOT transformed\n        # They already contain actual port prices as recorded in historical data
+        # Use actual port historical data for display (not transformed domestic)
+        if len(df_port) > 0:
+            # Map truck_type to load_type in port data
+            load_type_filter = 'Direct' if truck_type == 'Port Direct' else 'Trip'
+            
+            # Filter port data for this lane and load type
+            port_lane_data = df_port[
+                (df_port['pickup_city'] == pickup_ar) & 
+                (df_port['load_type'] == load_type_filter)
+            ].copy()
+            
+            # Also try matching by effective_dest (English destination)
+            if len(port_lane_data) == 0:
+                dest_en = to_english_city(dest_ar)
+                if dest_en:
+                    port_lane_data = df_port[
+                        (df_port['pickup_city'] == pickup_ar) & 
+                        (df_port['effective_dest'] == dest_en) &
+                        (df_port['load_type'] == load_type_filter)
+                    ].copy()
+            
+            if len(port_lane_data) > 0:
+                port_rec_data = port_lane_data[port_lane_data['days_ago'] <= RECENCY_WINDOW] if 'days_ago' in port_lane_data.columns else port_lane_data
+                
+                # Get stats from actual port data
+                if len(port_lane_data) > 0:
+                    disp_h_min = round(port_lane_data['total_carrier_price'].min(), 0)
+                    disp_h_med = round(port_lane_data['total_carrier_price'].median(), 0)
+                    disp_h_max = round(port_lane_data['total_carrier_price'].max(), 0)
+                    h_count = len(port_lane_data)
+                
+                if len(port_rec_data) > 0:
+                    disp_r_min = round(port_rec_data['total_carrier_price'].min(), 0)
+                    disp_r_med = round(port_rec_data['total_carrier_price'].median(), 0)
+                    disp_r_max = round(port_rec_data['total_carrier_price'].max(), 0)
+                    r_count = len(port_rec_data)
+                else:
+                    disp_r_min, disp_r_med, disp_r_max, r_count = None, None, None, 0
+                
+                # Port data doesn't have shipper prices, so leave those as None for port loads
+                disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
+                disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
     
     res = {
         'Truck_Type': truck_type,

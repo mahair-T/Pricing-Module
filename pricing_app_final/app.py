@@ -2654,22 +2654,146 @@ def load_port_reference_data():
     Load port reference data containing actual historical port prices.
     This data has real prices from port loads (Direct/Trip types).
     """
-    port_csv_path = os.path.join(APP_DIR, 'port_reference_data.csv')
-    if os.path.exists(port_csv_path):
-        df = pd.read_csv(port_csv_path)
-        # Calculate days_ago for consistency with df_knn
-        if 'pickup_date' in df.columns:
-            df['pickup_date'] = pd.to_datetime(df['pickup_date'])
-            df['days_ago'] = (pd.Timestamp.now() - df['pickup_date']).dt.days
-        # Create lane column for lookups
-        if 'effective_lane' in df.columns:
-            df['lane'] = df['effective_lane']
-        elif 'pickup_city' in df.columns and 'effective_dest' in df.columns:
-            df['lane'] = df['pickup_city'] + ' → ' + df['effective_dest']
-        return df
+    # Check multiple possible locations
+    possible_paths = [
+        os.path.join(APP_DIR, 'port_reference_data.csv'),
+        os.path.join(APP_DIR, 'model_export', 'port_reference_data.csv'),
+    ]
+    
+    for port_csv_path in possible_paths:
+        if os.path.exists(port_csv_path):
+            df = pd.read_csv(port_csv_path)
+            # Calculate days_ago for consistency with df_knn
+            if 'pickup_date' in df.columns:
+                df['pickup_date'] = pd.to_datetime(df['pickup_date'])
+                df['days_ago'] = (pd.Timestamp.now() - df['pickup_date']).dt.days
+            # Create lane column for lookups (multiple options for compatibility)
+            if 'effective_lane' in df.columns:
+                df['lane'] = df['effective_lane']
+            elif 'pickup_city' in df.columns and 'effective_dest' in df.columns:
+                df['lane'] = df['pickup_city'] + ' → ' + df['effective_dest']
+            elif 'pickup_city' in df.columns and 'destination_city' in df.columns:
+                df['lane'] = df['pickup_city'] + ' → ' + df['destination_city']
+            return df
     return pd.DataFrame()
 
 df_port = load_port_reference_data()
+
+def get_port_lane_data(pickup_ar, dest_ar, load_type):
+    """
+    Get port lane data with proper matching logic.
+    
+    The updated port_reference_data.csv now has both domestic-style columns AND port-specific columns:
+    - lane: pickup_city → destination_city (standard format)
+    - effective_lane: pickup_city → effective_dest (port format)
+    - effective_dest: The true drop-off location (important for Trip loads)
+    
+    For Port Direct: pickup_city → destination_city (normal domestic-style lane)
+    For Port Indirect (Trip): pickup_city → effective_dest (true_drop_off is the real destination)
+    
+    Args:
+        pickup_ar: Pickup city in Arabic
+        dest_ar: Destination city in Arabic (user selected)
+        load_type: 'Direct' or 'Trip'
+    
+    Returns:
+        DataFrame of matching port loads
+    """
+    if len(df_port) == 0:
+        return pd.DataFrame()
+    
+    # Filter by load_type first
+    port_type_data = df_port[df_port['load_type'] == load_type] if 'load_type' in df_port.columns else df_port
+    
+    if len(port_type_data) == 0:
+        return pd.DataFrame()
+    
+    port_lane_data = pd.DataFrame()
+    
+    # For DIRECT loads: Match by standard lane (pickup → destination)
+    if load_type == 'Direct':
+        # Strategy 1a: Match by lane column (pickup_city → destination_city)
+        if 'lane' in port_type_data.columns:
+            lane_ar = f"{pickup_ar} → {dest_ar}"
+            port_lane_data = port_type_data[port_type_data['lane'] == lane_ar].copy()
+        
+        # Strategy 1b: Match by pickup_city and destination_city directly
+        if len(port_lane_data) == 0 and 'destination_city' in port_type_data.columns:
+            port_lane_data = port_type_data[
+                (port_type_data['pickup_city'] == pickup_ar) &
+                (port_type_data['destination_city'] == dest_ar)
+            ].copy()
+    
+    # For TRIP loads: Match by effective_lane or effective_dest (the true drop-off)
+    elif load_type == 'Trip':
+        # Strategy 2a: Match by effective_lane (pickup_city → effective_dest)
+        if 'effective_lane' in port_type_data.columns:
+            effective_lane_ar = f"{pickup_ar} → {dest_ar}"
+            port_lane_data = port_type_data[port_type_data['effective_lane'] == effective_lane_ar].copy()
+        
+        # Strategy 2b: Match by pickup_city and effective_dest
+        if len(port_lane_data) == 0 and 'effective_dest' in port_type_data.columns:
+            port_lane_data = port_type_data[
+                (port_type_data['pickup_city'] == pickup_ar) &
+                (port_type_data['effective_dest'] == dest_ar)
+            ].copy()
+            
+            # Try with English destination name
+            if len(port_lane_data) == 0:
+                dest_en = to_english_city(dest_ar)
+                if dest_en:
+                    port_lane_data = port_type_data[
+                        (port_type_data['pickup_city'] == pickup_ar) &
+                        (port_type_data['effective_dest'] == dest_en)
+                    ].copy()
+        
+        # Strategy 2c: Partial match on effective_dest (handles slight naming variations)
+        if len(port_lane_data) == 0 and 'effective_dest' in port_type_data.columns:
+            port_lane_data = port_type_data[
+                (port_type_data['pickup_city'] == pickup_ar) &
+                (port_type_data['effective_dest'].astype(str).str.contains(dest_ar, case=False, na=False))
+            ].copy()
+    
+    # Fallback: Try matching with any available lane/effective_lane columns regardless of load type
+    if len(port_lane_data) == 0:
+        lane_ar = f"{pickup_ar} → {dest_ar}"
+        if 'effective_lane' in port_type_data.columns:
+            port_lane_data = port_type_data[port_type_data['effective_lane'] == lane_ar].copy()
+        if len(port_lane_data) == 0 and 'lane' in port_type_data.columns:
+            port_lane_data = port_type_data[port_type_data['lane'] == lane_ar].copy()
+    
+    return port_lane_data
+
+
+def get_port_ammunition_loads(pickup_ar, dest_ar, load_type, max_age_days=120):
+    """
+    Get ammunition loads from port data for display.
+    
+    Args:
+        pickup_ar: Pickup city in Arabic
+        dest_ar: Destination city in Arabic
+        load_type: 'Direct' or 'Trip'
+        max_age_days: Maximum age of loads to include
+    
+    Returns:
+        DataFrame of recent port loads for this lane
+    """
+    port_lane_data = get_port_lane_data(pickup_ar, dest_ar, load_type)
+    
+    if len(port_lane_data) == 0:
+        return pd.DataFrame()
+    
+    # Filter by age
+    if 'days_ago' in port_lane_data.columns:
+        port_lane_data = port_lane_data[port_lane_data['days_ago'] <= max_age_days]
+    
+    # Sort by recency
+    if 'pickup_date' in port_lane_data.columns:
+        port_lane_data = port_lane_data.sort_values('pickup_date', ascending=False)
+    elif 'days_ago' in port_lane_data.columns:
+        port_lane_data = port_lane_data.sort_values('days_ago', ascending=True)
+    
+    return port_lane_data.head(10)
 
 # ============================================
 # FILTER OUT BAD/INVALID CITY NAMES FROM HISTORICAL DATA
@@ -3117,58 +3241,65 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     disp_rs_min, disp_rs_med, disp_rs_max = rs_min, rs_med, rs_max
     
     if truck_type != 'Domestic' and PORT_MODEL:
-        buy_price = apply_port_transform(buy_price, truck_type)
-        # Apply rounding consistent with domestic (buy to 100, sell to 50)
-        buy_price = round_to_nearest(buy_price, 100)
-        # Apply margin after port transform
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PORT PRICING CASCADE:
+        # 1. Recency (90d): If port data exists for this lane in last 90 days → use median
+        # 2. Linear Transform: Otherwise → apply linear transform to domestic prediction
+        # ═══════════════════════════════════════════════════════════════════════════
+        
+        load_type_filter = 'Direct' if truck_type == 'Port Direct' else 'Trip'
+        
+        # Get port lane data using the helper function
+        port_lane_data = get_port_lane_data(pickup_ar, dest_ar, load_type_filter)
+        
+        # Check for recent port data (Recency model)
+        port_rec_data = pd.DataFrame()
+        if len(port_lane_data) > 0 and 'days_ago' in port_lane_data.columns:
+            port_rec_data = port_lane_data[port_lane_data['days_ago'] <= RECENCY_WINDOW]
+        elif len(port_lane_data) > 0:
+            port_rec_data = port_lane_data  # No days_ago column, use all data
+        
+        # CASCADE LOGIC
+        if len(port_rec_data) > 0:
+            # RECENCY MODEL: Use median of recent port data
+            buy_price = round_to_nearest(port_rec_data['total_carrier_price'].median(), 100)
+            model_used = f"Port Recency ({len(port_rec_data)} loads)"
+        else:
+            # LINEAR TRANSFORM: Apply port transform to domestic prediction
+            buy_price = apply_port_transform(buy_price, truck_type)
+            buy_price = round_to_nearest(buy_price, 100)
+            model_used = f"{model_used} + Port Transform"
+        
+        # Apply margin after price determination
         if buy_price:
             _, margin, _ = get_backhaul_probability(dest_ar)
             sell_price = round_to_nearest(buy_price * (1 + margin), 50)
-        model_used = f"{model_used} + Port Transform"
         
-        # Use actual port historical data for display (not transformed domestic)
-        if len(df_port) > 0:
-            # Map truck_type to load_type in port data
-            load_type_filter = 'Direct' if truck_type == 'Port Direct' else 'Trip'
+        # Update display stats with actual port data
+        if len(port_lane_data) > 0:
+            disp_h_min = round(port_lane_data['total_carrier_price'].min(), 0)
+            disp_h_med = round(port_lane_data['total_carrier_price'].median(), 0)
+            disp_h_max = round(port_lane_data['total_carrier_price'].max(), 0)
+            h_count = len(port_lane_data)
             
-            # Filter port data for this lane and load type
-            port_lane_data = df_port[
-                (df_port['pickup_city'] == pickup_ar) &
-                (df_port['destination_city'] == dest_ar) &
-                (df_port['load_type'] == load_type_filter)
-            ].copy()
+            if len(port_rec_data) > 0:
+                disp_r_min = round(port_rec_data['total_carrier_price'].min(), 0)
+                disp_r_med = round(port_rec_data['total_carrier_price'].median(), 0)
+                disp_r_max = round(port_rec_data['total_carrier_price'].max(), 0)
+                r_count = len(port_rec_data)
+            else:
+                disp_r_min, disp_r_med, disp_r_max, r_count = None, None, None, 0
             
-            # Also try matching by effective_dest (English destination)
-            if len(port_lane_data) == 0:
-                dest_en = to_english_city(dest_ar)
-                if dest_en:
-                    port_lane_data = df_port[
-                        (df_port['pickup_city'] == pickup_ar) & 
-                        (df_port['effective_dest'] == dest_en) &
-                        (df_port['load_type'] == load_type_filter)
-                    ].copy()
-            
-            if len(port_lane_data) > 0:
-                port_rec_data = port_lane_data[port_lane_data['days_ago'] <= RECENCY_WINDOW] if 'days_ago' in port_lane_data.columns else port_lane_data
-                
-                # Get stats from actual port data
-                if len(port_lane_data) > 0:
-                    disp_h_min = round(port_lane_data['total_carrier_price'].min(), 0)
-                    disp_h_med = round(port_lane_data['total_carrier_price'].median(), 0)
-                    disp_h_max = round(port_lane_data['total_carrier_price'].max(), 0)
-                    h_count = len(port_lane_data)
-                
-                if len(port_rec_data) > 0:
-                    disp_r_min = round(port_rec_data['total_carrier_price'].min(), 0)
-                    disp_r_med = round(port_rec_data['total_carrier_price'].median(), 0)
-                    disp_r_max = round(port_rec_data['total_carrier_price'].max(), 0)
-                    r_count = len(port_rec_data)
-                else:
-                    disp_r_min, disp_r_med, disp_r_max, r_count = None, None, None, 0
-                
-                # Port data doesn't have shipper prices, so leave those as None for port loads
-                disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
-                disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
+            # Port data doesn't have shipper prices
+            disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
+            disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
+        else:
+            # No port data found - set counts to 0 but keep transformed price
+            h_count, r_count = 0, 0
+            disp_h_min, disp_h_med, disp_h_max = None, None, None
+            disp_r_min, disp_r_med, disp_r_max = None, None, None
+            disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
+            disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
     
     res = {
         'Truck_Type': truck_type,
@@ -3234,14 +3365,39 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
     model_used = pricing['model_used']
     
     if truck_type != 'Domestic' and PORT_MODEL:
-        buy_price = apply_port_transform(buy_price, truck_type)
-        # Apply rounding consistent with domestic (buy to 100, sell to 50)
-        buy_price = round_to_nearest(buy_price, 100)
-        # Apply margin after port transform
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PORT PRICING CASCADE (same as price_single_route):
+        # 1. Recency (90d): If port data exists → use median
+        # 2. Linear Transform: Otherwise → apply linear transform to domestic prediction
+        # ═══════════════════════════════════════════════════════════════════════════
+        
+        load_type_filter = 'Direct' if truck_type == 'Port Direct' else 'Trip'
+        
+        # Get port lane data
+        port_lane_data = get_port_lane_data(pickup_ar, dest_ar, load_type_filter)
+        
+        # Check for recent port data
+        port_rec_data = pd.DataFrame()
+        if len(port_lane_data) > 0 and 'days_ago' in port_lane_data.columns:
+            port_rec_data = port_lane_data[port_lane_data['days_ago'] <= RECENCY_WINDOW]
+        elif len(port_lane_data) > 0:
+            port_rec_data = port_lane_data
+        
+        # CASCADE LOGIC
+        if len(port_rec_data) > 0:
+            # RECENCY MODEL: Use median of recent port data
+            buy_price = round_to_nearest(port_rec_data['total_carrier_price'].median(), 100)
+            model_used = f"Port Recency ({len(port_rec_data)})"
+        else:
+            # LINEAR TRANSFORM: Apply port transform to domestic prediction
+            buy_price = apply_port_transform(buy_price, truck_type)
+            buy_price = round_to_nearest(buy_price, 100)
+            model_used = f"{model_used} + Port Transform"
+        
+        # Apply margin after price determination
         if buy_price:
             _, margin, _ = get_backhaul_probability(dest_ar)
             sell_price = round_to_nearest(buy_price * (1 + margin), 50)
-        model_used = f"{model_used} + Port Transform"
     
     return {
         'From': to_english_city(pickup_ar), 
@@ -3265,7 +3421,11 @@ model_status = []
 if index_shrink_predictor: model_status.append("✅ Index+Shrink (90d HL)")
 if spatial_predictor: model_status.append("✅ Spatial R150 IDW")
 if regional_predictor: model_status.append("✅ Regional Fallback")
-if PORT_MODEL: model_status.append("✅ Port Pricing")
+if PORT_MODEL: model_status.append("✅ Port Transform")
+if len(df_port) > 0: 
+    port_direct = len(df_port[df_port['load_type'] == 'Direct']) if 'load_type' in df_port.columns else 0
+    port_trip = len(df_port[df_port['load_type'] == 'Trip']) if 'load_type' in df_port.columns else 0
+    model_status.append(f"🚢 Port Data ({port_direct}D/{port_trip}T)")
 dist_status = f"✅ {len(DISTANCE_MATRIX):,} distances" if DISTANCE_MATRIX else ""
 st.caption(f"ML-powered pricing | Domestic + Port | {' | '.join(model_status)} | {dist_status}")
 
@@ -3399,63 +3559,100 @@ with tab1:
             st.markdown("---")
             st.subheader("🚚 Your Ammunition (Recent Matches)")
             
-            lane_ar = f"{pickup_city} → {destination_city}"
-            same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, comm_in)
+            truck_type_result = result.get('Truck_Type', 'Domestic')
             
-            # Check if shipper/company column exists in data
-            has_shipper = 'shipper_name' in df_knn.columns or 'company' in df_knn.columns or 'client' in df_knn.columns
-            shipper_col = 'shipper_name' if 'shipper_name' in df_knn.columns else ('company' if 'company' in df_knn.columns else 'client')
-            
-            commodity_used = to_english_commodity(comm_in) if comm_in else result['Commodity']
-            if len(same_samples) > 0:
-                st.markdown(f"**Same Commodity ({commodity_used}):**")
-                same_samples['Lane_EN'] = same_samples['pickup_city'].apply(to_english_city) + ' → ' + same_samples['destination_city'].apply(to_english_city)
-                same_samples['Commodity_EN'] = same_samples['commodity'].apply(to_english_commodity)
+            if truck_type_result != 'Domestic' and len(df_port) > 0:
+                # ═══════════════════════════════════════════════════════════════════
+                # PORT DATA: Show actual port loads
+                # ═══════════════════════════════════════════════════════════════════
+                load_type = 'Direct' if truck_type_result == 'Port Direct' else 'Trip'
+                port_samples = get_port_ammunition_loads(pickup_city, destination_city, load_type)
                 
-                # Build columns list based on available data
-                if has_shipper and shipper_col in same_samples.columns:
-                    display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', shipper_col, 'total_carrier_price', 'days_ago']].copy()
-                    display_same.columns = ['Date', 'Lane', 'Commodity', 'Shipper', 'Carrier (SAR)', 'Days Ago']
+                if len(port_samples) > 0:
+                    st.markdown(f"**Port {load_type} Loads:**")
+                    
+                    # Build display dataframe
+                    display_cols = ['pickup_date', 'total_carrier_price', 'days_ago']
+                    col_names = ['Date', 'Carrier (SAR)', 'Days Ago']
+                    
+                    # Add effective_dest if available (shows true destination)
+                    if 'effective_dest' in port_samples.columns:
+                        port_samples['Destination'] = port_samples['effective_dest']
+                        display_cols.insert(1, 'Destination')
+                        col_names.insert(1, 'Destination')
+                    
+                    # Add distance if available
+                    if 'distance' in port_samples.columns:
+                        display_cols.insert(-1, 'distance')
+                        col_names.insert(-1, 'Distance (km)')
+                    
+                    display_port = port_samples[display_cols].copy()
+                    display_port.columns = col_names
+                    
+                    if 'Date' in display_port.columns:
+                        display_port['Date'] = pd.to_datetime(display_port['Date']).dt.strftime('%Y-%m-%d')
+                    display_port['Carrier (SAR)'] = display_port['Carrier (SAR)'].round(0).astype(int)
+                    if 'Distance (km)' in display_port.columns:
+                        display_port['Distance (km)'] = display_port['Distance (km)'].round(0).astype(int)
+                    
+                    st.dataframe(display_port, use_container_width=True, hide_index=True)
+                    st.caption(f"**{len(port_samples)} port loads** | Data from port_reference_data.csv")
                 else:
-                    display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
-                    display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                    st.caption(f"No recent port {load_type} loads found for this lane")
+                    st.info("💡 Using linear transform of domestic prices as fallback")
+            else:
+                # ═══════════════════════════════════════════════════════════════════
+                # DOMESTIC DATA: Show domestic loads (original behavior)
+                # ═══════════════════════════════════════════════════════════════════
+                lane_ar = f"{pickup_city} → {destination_city}"
+                same_samples, other_samples = get_ammunition_loads(lane_ar, vehicle_type, comm_in)
                 
-                display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
-                # Apply port transform if not Domestic
-                if result.get('Truck_Type', 'Domestic') != 'Domestic' and PORT_MODEL:
-                    display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].apply(lambda x: apply_port_transform(x, result['Truck_Type'])).round(0).astype(int)
-                else:
+                # Check if shipper/company column exists in data
+                has_shipper = 'shipper_name' in df_knn.columns or 'company' in df_knn.columns or 'client' in df_knn.columns
+                shipper_col = 'shipper_name' if 'shipper_name' in df_knn.columns else ('company' if 'company' in df_knn.columns else 'client')
+                
+                commodity_used = to_english_commodity(comm_in) if comm_in else result['Commodity']
+                if len(same_samples) > 0:
+                    st.markdown(f"**Same Commodity ({commodity_used}):**")
+                    same_samples['Lane_EN'] = same_samples['pickup_city'].apply(to_english_city) + ' → ' + same_samples['destination_city'].apply(to_english_city)
+                    same_samples['Commodity_EN'] = same_samples['commodity'].apply(to_english_commodity)
+                    
+                    # Build columns list based on available data
+                    if has_shipper and shipper_col in same_samples.columns:
+                        display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', shipper_col, 'total_carrier_price', 'days_ago']].copy()
+                        display_same.columns = ['Date', 'Lane', 'Commodity', 'Shipper', 'Carrier (SAR)', 'Days Ago']
+                    else:
+                        display_same = same_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                        display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                    
+                    display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
                     display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
-                st.dataframe(display_same, use_container_width=True, hide_index=True)
-            else:
-                st.caption(f"No recent loads with {commodity_used}")
-            
-            if len(other_samples) > 0:
-                st.markdown("**Other Commodities:**")
-                other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
-                other_samples['Commodity_EN'] = other_samples['commodity'].apply(to_english_commodity)
-                
-                # Build columns list based on available data
-                if has_shipper and shipper_col in other_samples.columns:
-                    display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', shipper_col, 'total_carrier_price', 'days_ago']].copy()
-                    display_other.columns = ['Date', 'Lane', 'Commodity', 'Shipper', 'Carrier (SAR)', 'Days Ago']
+                    st.dataframe(display_same, use_container_width=True, hide_index=True)
                 else:
-                    display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
-                    display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                    st.caption(f"No recent loads with {commodity_used}")
                 
-                display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
-                # Apply port transform if not Domestic
-                if result.get('Truck_Type', 'Domestic') != 'Domestic' and PORT_MODEL:
-                    display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].apply(lambda x: apply_port_transform(x, result['Truck_Type'])).round(0).astype(int)
-                else:
+                if len(other_samples) > 0:
+                    st.markdown("**Other Commodities:**")
+                    other_samples['Lane_EN'] = other_samples['pickup_city'].apply(to_english_city) + ' → ' + other_samples['destination_city'].apply(to_english_city)
+                    other_samples['Commodity_EN'] = other_samples['commodity'].apply(to_english_commodity)
+                    
+                    # Build columns list based on available data
+                    if has_shipper and shipper_col in other_samples.columns:
+                        display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', shipper_col, 'total_carrier_price', 'days_ago']].copy()
+                        display_other.columns = ['Date', 'Lane', 'Commodity', 'Shipper', 'Carrier (SAR)', 'Days Ago']
+                    else:
+                        display_other = other_samples[['pickup_date', 'Lane_EN', 'Commodity_EN', 'total_carrier_price', 'days_ago']].copy()
+                        display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
+                    
+                    display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
                     display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
-                st.dataframe(display_other, use_container_width=True, hide_index=True)
-            else:
-                st.caption("No recent loads with other commodities")
-            
-            total_shown = len(same_samples) + len(other_samples)
-            if total_shown > 0:
-                st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
+                    st.dataframe(display_other, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No recent loads with other commodities")
+                
+                total_shown = len(same_samples) + len(other_samples)
+                if total_shown > 0:
+                    st.caption(f"**{total_shown} loads** | Samples ≥{MIN_DAYS_APART} days apart | Max {MAX_AGE_DAYS} days old")
 
     if 'last_result' in st.session_state and 'last_lane' in st.session_state:
         st.markdown("---")

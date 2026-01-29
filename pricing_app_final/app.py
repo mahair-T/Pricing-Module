@@ -3083,6 +3083,12 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     sell_price = pricing['sell_price']
     model_used = pricing['model_used']
     
+    # Prepare historical/recent values (may be transformed for port)
+    disp_h_min, disp_h_med, disp_h_max = h_min, h_med, h_max
+    disp_r_min, disp_r_med, disp_r_max = r_min, r_med, r_max
+    disp_hs_min, disp_hs_med, disp_hs_max = hs_min, hs_med, hs_max
+    disp_rs_min, disp_rs_med, disp_rs_max = rs_min, rs_med, rs_max
+    
     if truck_type != 'Domestic' and PORT_MODEL:
         buy_price = apply_port_transform(buy_price, truck_type)
         # Apply margin after port transform
@@ -3090,15 +3096,29 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             _, margin, _ = get_backhaul_probability(dest_ar)
             sell_price = round(buy_price * (1 + margin))
         model_used = f"{model_used} + Port Transform"
+        
+        # Apply port transform to historical/recent prices for consistent display
+        disp_h_min = apply_port_transform(h_min, truck_type) if h_min else None
+        disp_h_med = apply_port_transform(h_med, truck_type) if h_med else None
+        disp_h_max = apply_port_transform(h_max, truck_type) if h_max else None
+        disp_r_min = apply_port_transform(r_min, truck_type) if r_min else None
+        disp_r_med = apply_port_transform(r_med, truck_type) if r_med else None
+        disp_r_max = apply_port_transform(r_max, truck_type) if r_max else None
+        disp_hs_min = apply_port_transform(hs_min, truck_type) if hs_min else None
+        disp_hs_med = apply_port_transform(hs_med, truck_type) if hs_med else None
+        disp_hs_max = apply_port_transform(hs_max, truck_type) if hs_max else None
+        disp_rs_min = apply_port_transform(rs_min, truck_type) if rs_min else None
+        disp_rs_med = apply_port_transform(rs_med, truck_type) if rs_med else None
+        disp_rs_max = apply_port_transform(rs_max, truck_type) if rs_max else None
     
     res = {
         'Truck_Type': truck_type,
         'Vehicle_Type': to_english_vehicle(vehicle_ar), 'Commodity': to_english_commodity(commodity),
         'Weight_Tons': round(weight, 1), 'Distance_km': round(dist, 0), 'Distance_Source': dist_src,
-        'Hist_Count': h_count, 'Hist_Min': h_min, 'Hist_Median': h_med, 'Hist_Max': h_max,
-        f'Recent_{RECENCY_WINDOW}d_Count': r_count, f'Recent_{RECENCY_WINDOW}d_Min': r_min, f'Recent_{RECENCY_WINDOW}d_Median': r_med, f'Recent_{RECENCY_WINDOW}d_Max': r_max,
-        'Hist_Sell_Min': hs_min, 'Hist_Sell_Median': hs_med, 'Hist_Sell_Max': hs_max,
-        f'Recent_{RECENCY_WINDOW}d_Sell_Min': rs_min, f'Recent_{RECENCY_WINDOW}d_Sell_Median': rs_med, f'Recent_{RECENCY_WINDOW}d_Sell_Max': rs_max,
+        'Hist_Count': h_count, 'Hist_Min': disp_h_min, 'Hist_Median': disp_h_med, 'Hist_Max': disp_h_max,
+        f'Recent_{RECENCY_WINDOW}d_Count': r_count, f'Recent_{RECENCY_WINDOW}d_Min': disp_r_min, f'Recent_{RECENCY_WINDOW}d_Median': disp_r_med, f'Recent_{RECENCY_WINDOW}d_Max': disp_r_max,
+        'Hist_Sell_Min': disp_hs_min, 'Hist_Sell_Median': disp_hs_med, 'Hist_Sell_Max': disp_hs_max,
+        f'Recent_{RECENCY_WINDOW}d_Sell_Min': disp_rs_min, f'Recent_{RECENCY_WINDOW}d_Sell_Median': disp_rs_med, f'Recent_{RECENCY_WINDOW}d_Sell_Max': disp_rs_max,
         'Buy_Price': buy_price, 'Rec_Sell_Price': sell_price,
         'Ref_Sell_Price': pricing['ref_sell_price'], 'Ref_Sell_Source': pricing['ref_sell_source'],
         'Rental_Cost': pricing['rental_cost'], 'Target_Margin': pricing['target_margin'],
@@ -3240,7 +3260,7 @@ with tab1:
         vehicle_en = st.selectbox("Vehicle Type", options=vehicle_types_en, key='single_vehicle')
         vehicle_type = to_arabic_vehicle(vehicle_en)
     with col4:
-        truck_type = st.selectbox("🚣 Truck Type", options=TRUCK_TYPES, key='single_truck_type', 
+        truck_type = st.selectbox("Freight Segment", options=TRUCK_TYPES, key='single_truck_type', 
                                    help="Domestic: Standard pricing | Port Direct/Indirect: Port pricing transform")
 
     st.subheader("📦 Optional Details")
@@ -3340,7 +3360,11 @@ with tab1:
                     display_same.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
                 
                 display_same['Date'] = pd.to_datetime(display_same['Date']).dt.strftime('%Y-%m-%d')
-                display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
+                # Apply port transform if not Domestic
+                if result.get('Truck_Type', 'Domestic') != 'Domestic' and PORT_MODEL:
+                    display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].apply(lambda x: apply_port_transform(x, result['Truck_Type'])).round(0).astype(int)
+                else:
+                    display_same['Carrier (SAR)'] = display_same['Carrier (SAR)'].round(0).astype(int)
                 st.dataframe(display_same, use_container_width=True, hide_index=True)
             else:
                 st.caption(f"No recent loads with {commodity_used}")
@@ -3359,7 +3383,11 @@ with tab1:
                     display_other.columns = ['Date', 'Lane', 'Commodity', 'Carrier (SAR)', 'Days Ago']
                 
                 display_other['Date'] = pd.to_datetime(display_other['Date']).dt.strftime('%Y-%m-%d')
-                display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
+                # Apply port transform if not Domestic
+                if result.get('Truck_Type', 'Domestic') != 'Domestic' and PORT_MODEL:
+                    display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].apply(lambda x: apply_port_transform(x, result['Truck_Type'])).round(0).astype(int)
+                else:
+                    display_other['Carrier (SAR)'] = display_other['Carrier (SAR)'].round(0).astype(int)
                 st.dataframe(display_other, use_container_width=True, hide_index=True)
             else:
                 st.caption("No recent loads with other commodities")
@@ -3546,27 +3574,21 @@ with tab2:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # 3b. Truck Type Selection (Port Pricing)
-                st.markdown("<h5 style='text-align: center;'>🚣 Select Truck Type</h5>", unsafe_allow_html=True)
-                st.caption("Truck type applies port pricing transform to all routes in this batch")
+                # 3b. Freight Segment Selection (Port Pricing)
+                st.markdown("<h5 style='text-align: center;'>Select Freight Segment</h5>", unsafe_allow_html=True)
+                st.caption("Freight segment applies port pricing transform to all routes in this batch")
                 
-                t_cols = st.columns(3)
-                with t_cols[0]:
-                    truck_domestic = st.radio("", options=['Domestic'], key='bulk_truck_domestic', label_visibility='collapsed')
-                with t_cols[1]:
-                    truck_direct = st.radio("", options=['Port Direct'], key='bulk_truck_direct', label_visibility='collapsed')
-                with t_cols[2]:
-                    truck_indirect = st.radio("", options=['Port Indirect'], key='bulk_truck_indirect', label_visibility='collapsed')
-                
-                # Single select logic using radio
+                # Single select using horizontal radio
                 selected_truck_type = st.radio(
-                    "Select one:", 
+                    "Freight Segment:", 
                     options=TRUCK_TYPES, 
                     index=0, 
                     horizontal=True,
                     key='bulk_truck_type',
+                    label_visibility='collapsed',
                     help="Domestic: Standard pricing | Port Direct/Indirect: Apply port pricing transform"
                 )
+
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -4173,7 +4195,7 @@ with tab2:
                 import time
                 status_placeholder = st.empty()
                 
-                for remaining in range(10, 0, -1):
+                for remaining in range(3, 0, -1):
                     status_placeholder.info(f"⏳ Waiting for Google Maps API to calculate {flush_count} distances... {remaining}s")
                     time.sleep(1)
                 

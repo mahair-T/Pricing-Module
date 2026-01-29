@@ -3882,21 +3882,19 @@ with tab2:
                 st.markdown("<h5 style='text-align: center;'>Select Freight Segment</h5>", unsafe_allow_html=True)
                 st.markdown("<p style='text-align: center; font-size: 0.85rem; color: gray;'>Freight segment applies port pricing transform to all routes in this batch</p>", unsafe_allow_html=True)
                 
-                # Center the radio buttons using CSS
+                # Center the radio buttons using columns and CSS
                 st.markdown("""
                     <style>
-                        div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] div[data-testid="stRadio"][aria-label="Freight Segment:"]) {
-                            justify-content: center;
-                        }
-                        div[data-testid="stRadio"][aria-label="Freight Segment:"] > div {
-                            display: flex;
-                            justify-content: center;
+                        /* Target the radio group and center its flex items */
+                        [data-testid="stRadio"] > div[role="radiogroup"] {
+                            justify-content: center !important;
                         }
                     </style>
                 """, unsafe_allow_html=True)
                 
-                _, center_col, _ = st.columns([1, 2, 1])
-                with center_col:
+                # Use columns to constrain width and center
+                spacer_left, radio_col, spacer_right = st.columns([1, 2, 1])
+                with radio_col:
                     selected_truck_type = st.radio(
                         "Freight Segment:", 
                         options=TRUCK_TYPES, 

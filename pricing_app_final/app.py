@@ -2200,9 +2200,10 @@ def to_arabic_commodity(commodity_en):
     return COMMODITY_AR.get(commodity_en, commodity_en)
 
 # ============================================
-# INDEX + SHRINKAGE MODEL (Rare Lane Model)
+# INDEX + SHRINKAGE MODEL (90d Half-Life)
 # Used for lanes WITH some historical data
 # Combines market index trends with shrinkage estimation
+# Uses exponential decay weighting with 90-day half-life
 # ============================================
 class IndexShrinkagePredictor:
     """
@@ -2211,6 +2212,7 @@ class IndexShrinkagePredictor:
     Two-component prediction:
     1. Index: Uses lane-specific multiplier × current market index
        - Captures how this lane moves relative to market
+       - Uses exponential decay weighting (90d half-life)
     2. Shrinkage: Bayesian estimate that shrinks lane mean toward city prior
        - Handles sparse data by borrowing strength from similar lanes
     
@@ -2222,13 +2224,17 @@ class IndexShrinkagePredictor:
         self.current_index = m['current_index']      # Current market index value
         self.lane_multipliers = m['lane_multipliers'] # Lane-specific multipliers
         self.global_mean = m['global_mean']          # Global mean CPK (fallback)
-        self.k = m['k_prior_strength']               # Shrinkage strength parameter
+        # Handle both old ('k_prior_strength') and new ('k') model formats
+        self.k = m.get('k', m.get('k_prior_strength', 10))  # Shrinkage strength parameter
         self.pickup_priors = m['pickup_priors']      # City-level priors for pickup
         self.dest_priors = m['dest_priors']          # City-level priors for destination
         self.lane_stats = m['lane_stats']            # Historical lane statistics
         self.city_to_region = m.get('city_to_region', {})
         self.regional_cpk = {tuple(k.split('|')): v for k, v in m.get('regional_cpk', {}).items()} if isinstance(list(m.get('regional_cpk', {}).keys())[0] if m.get('regional_cpk') else '', str) else m.get('regional_cpk', {})
-        self.model_date = m.get('model_date', 'Unknown')
+        # Get model config info if available
+        config = m.get('config', {})
+        self.model_date = config.get('training_date', m.get('model_date', 'Unknown'))
+        self.half_life_days = config.get('half_life_days', 90)
     
     def get_canonical_lane(self, lane):
         parts = lane.split(' → ')
@@ -2278,19 +2284,23 @@ class IndexShrinkagePredictor:
             
         if stats:
             lane_mean = stats['lane_mean']
+            # Use effective sample size ('lane_n') for shrinkage calculation
+            # This accounts for exponential decay weighting in the 90d HL model
             lane_n = stats['lane_n']
             lam = lane_n / (lane_n + self.k)
             shrink_pred = lam * lane_mean + (1 - lam) * city_prior
+            # Use raw trip count ('raw_n') for confidence if available, else fall back to lane_n
+            raw_n = stats.get('raw_n', lane_n)
         else:
             shrink_pred = city_prior
+            raw_n = 0
             
         # Combine
         if idx_pred is not None:
             predicted_cpk = (idx_pred + shrink_pred) / 2
             method = 'Index + Shrinkage'
             if stats:
-                n = stats['lane_n']
-                confidence = 'High' if n >= 20 else 'Medium' if n >= 5 else 'Low'
+                confidence = 'High' if raw_n >= 20 else 'Medium' if raw_n >= 5 else 'Low'
             else:
                 confidence = 'Low'
         else:
@@ -2318,117 +2328,193 @@ class IndexShrinkagePredictor:
         return result
 
 # ============================================
-# BLEND MODEL (New Lane Model - 0.7 Province)
+# SPATIAL MODEL (R150 P50 IDW - New Lane Model)
 # Used for completely NEW lanes with NO historical data
-# Blends province-level averages with city-level multipliers
-# Uses 13 official Saudi provinces for more granular pricing
+# Uses inverse-distance weighted CPK from nearby cities
+# Falls back to Province P50 percentile
 # ============================================
-class BlendPredictor:
+class SpatialPredictor:
     """
-    Blend model (0.7 Province + 0.3 City) for completely new lanes.
+    Spatial R150 P50 IDW model for completely new lanes.
     
     For lanes with zero historical data, we estimate price by:
-    1. Province CPK: Average CPK for the province pair (13 Saudi provinces)
-       e.g., "Riyadh Province" → "Eastern Province"
-    2. City Multipliers: Pickup and destination city adjustment factors
-    
-    Final: 70% Province + 30% City-adjusted
+    1. Spatial IDW: Find nearby cities within 150km radius, compute
+       inverse-distance weighted average of their CPK values
+    2. Province P50: If not enough neighbors, use province pair's 50th percentile
+    3. Global Mean: Last resort fallback
     
     This provides a reasonable estimate even for never-seen routes by
-    leveraging geographic patterns in freight pricing at the province level.
-    
-    Note: Falls back to 5-region model if province data not available.
+    leveraging geographic proximity patterns in freight pricing.
     """
     
     def __init__(self, model_artifacts):
         m = model_artifacts
-        self.config = m['config']
-        self.province_weight = self.config.get('province_weight', self.config.get('regional_weight', 0.7))  # 70% province
-        self.current_index = m['current_index']
-        self.pickup_city_mult = m['pickup_city_mult']   # City-specific adjustments
-        self.dest_city_mult = m['dest_city_mult']
+        self.config = m.get('config', {})
+        self.radius_km = self.config.get('radius_km', 150)
+        self.percentile = self.config.get('percentile', 50)
+        self.min_neighbors = self.config.get('min_neighbors', 3)
         
-        # Province mappings (13 provinces) - primary for Blend model
+        # Neighbor lookup (city -> [(neighbor_city, distance), ...])
+        self.city_neighbors = m.get('city_neighbors', {})
+        
+        # City-level CPK statistics
+        self.city_outbound_cpk = m.get('city_outbound_cpk', {})
+        self.city_inbound_cpk = m.get('city_inbound_cpk', {})
+        
+        # Province fallback
+        self.province_pair_cpk = m.get('province_pair_cpk', {})
         self.city_to_province = m.get('city_to_province', {})
-        self.province_cpk = m.get('province_cpk', {})
         
-        # Region mappings (5 regions) - fallback for backward compatibility
-        self.city_to_region = m.get('city_to_region', {})
-        self.regional_cpk = m.get('regional_cpk', {})
+        # Global fallback
+        self.global_mean = m.get('global_mean', 2.0)
         
         self.model_date = self.config.get('training_date', 'Unknown')
-        
-        # Log model info for debugging
-        n_provinces = len(set(self.city_to_province.values())) if self.city_to_province else 0
-        n_regions = len(set(self.city_to_region.values())) if self.city_to_region else 0
-        self.using_provinces = n_provinces > 5  # True if we have 13 provinces, not 5 regions
     
-    def predict(self, pickup_city, dest_city, distance_km=None, 
+    def _get_nearby_cities(self, city, radius_km):
+        """Get cities within radius."""
+        if city not in self.city_neighbors:
+            return []
+        return [(c, d) for c, d in self.city_neighbors[city] if d <= radius_km]
+    
+    def predict(self, pickup_city, dest_city, distance_km=None,
                 pickup_region_override=None, dest_region_override=None):
         """
-        Predict CPK for a lane using province/region blending.
+        Predict CPK for a lane using spatial neighbor interpolation.
         
         Args:
             pickup_city: Pickup city (Arabic canonical or English)
             dest_city: Destination city (Arabic canonical or English)
             distance_km: Distance in km (optional, used to calculate total cost)
-            pickup_region_override: Override region for pickup (from coordinates)
-            dest_region_override: Override region for destination (from coordinates)
+            pickup_region_override: Override region for pickup (from coordinates) - unused but kept for API compatibility
+            dest_region_override: Override region for destination (from coordinates) - unused but kept for API compatibility
         """
         # Get canonical names
         p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
         d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
         
-        # Try PROVINCE lookup first (13 provinces - more granular)
-        p_province = CANONICAL_TO_PROVINCE.get(p_can) or self.city_to_province.get(p_can) or self.city_to_province.get(pickup_city)
-        d_province = CANONICAL_TO_PROVINCE.get(d_can) or self.city_to_province.get(d_can) or self.city_to_province.get(dest_city)
+        # Try spatial IDW first
+        pickup_neighbors = self._get_nearby_cities(p_can, self.radius_km)
+        pickup_data = []
+        for neighbor, dist in pickup_neighbors:
+            if neighbor in self.city_outbound_cpk:
+                cpk_info = self.city_outbound_cpk[neighbor]
+                # Handle both dict and simple float formats
+                cpk = cpk_info.get('outbound_cpk_mean', cpk_info) if isinstance(cpk_info, dict) else cpk_info
+                pickup_data.append({'cpk': cpk, 'dist': dist})
         
-        province_cpk = None
-        if p_province and d_province:
-            province_cpk = self.province_cpk.get((p_province, d_province))
+        dest_neighbors = self._get_nearby_cities(d_can, self.radius_km)
+        dest_data = []
+        for neighbor, dist in dest_neighbors:
+            if neighbor in self.city_inbound_cpk:
+                cpk_info = self.city_inbound_cpk[neighbor]
+                cpk = cpk_info.get('inbound_cpk_mean', cpk_info) if isinstance(cpk_info, dict) else cpk_info
+                dest_data.append({'cpk': cpk, 'dist': dist})
         
-        # If no province CPK found, try REGION fallback (5 regions)
-        regional_cpk = None
-        if province_cpk is None:
-            # First try to get region from city mapping
-            p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can) or self.city_to_region.get(pickup_city)
-            d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can) or self.city_to_region.get(dest_city)
+        predicted_cpk = None
+        method = None
+        confidence = 'Low'
+        
+        # Spatial IDW if enough neighbors
+        if len(pickup_data) >= self.min_neighbors and len(dest_data) >= self.min_neighbors:
+            epsilon = 1  # Avoid division by zero
+            pickup_weights = [1 / (d['dist'] + epsilon) for d in pickup_data]
+            pickup_weighted = sum(d['cpk'] * w for d, w in zip(pickup_data, pickup_weights)) / sum(pickup_weights)
             
-            # If still no region found, use coordinate-based region overrides
-            if not p_region and pickup_region_override:
-                p_region = pickup_region_override
-            if not d_region and dest_region_override:
-                d_region = dest_region_override
+            dest_weights = [1 / (d['dist'] + epsilon) for d in dest_data]
+            dest_weighted = sum(d['cpk'] * w for d, w in zip(dest_data, dest_weights)) / sum(dest_weights)
             
-            if p_region and d_region:
-                regional_cpk = self.regional_cpk.get((p_region, d_region))
-        
-        # City Multipliers (30% weight)
-        p_mult = self.pickup_city_mult.get(pickup_city, self.pickup_city_mult.get(p_can, 1.0))
-        d_mult = self.dest_city_mult.get(dest_city, self.dest_city_mult.get(d_can, 1.0))
-        city_cpk = p_mult * d_mult * self.current_index
-        
-        # Determine which geographic CPK to use
-        if province_cpk is not None:
-            # Use province-level (primary - 13 provinces)
-            predicted_cpk = self.province_weight * province_cpk + (1 - self.province_weight) * city_cpk
-            method = f'Blend ({self.province_weight:.0%} Province)'
+            predicted_cpk = (pickup_weighted + dest_weighted) / 2
+            method = f'Spatial IDW (R{self.radius_km})'
             confidence = 'Low'
-        elif regional_cpk is not None:
-            # Fallback to region-level (5 regions)
-            predicted_cpk = self.province_weight * regional_cpk + (1 - self.province_weight) * city_cpk
-            method = f'Blend ({self.province_weight:.0%} Regional)'
-            # If we used coordinate-based regions, note it
-            if pickup_region_override or dest_region_override:
-                method = f'Blend ({self.province_weight:.0%} Regional/Coords)'
-            confidence = 'Low'
-        else:
-            # No geographic data - use city multipliers only
-            predicted_cpk = city_cpk
-            method = 'City Multipliers'
+        
+        # Province P50 fallback
+        if predicted_cpk is None:
+            p_province = CANONICAL_TO_PROVINCE.get(p_can) or self.city_to_province.get(p_can)
+            d_province = CANONICAL_TO_PROVINCE.get(d_can) or self.city_to_province.get(d_can)
+            
+            if p_province and d_province:
+                prov_data = self.province_pair_cpk.get((p_province, d_province))
+                if prov_data:
+                    # Get the percentile value (e.g., 'p50')
+                    percentile_key = f'p{self.percentile}'
+                    if isinstance(prov_data, dict) and percentile_key in prov_data:
+                        predicted_cpk = prov_data[percentile_key]
+                    elif isinstance(prov_data, dict) and 'median' in prov_data:
+                        predicted_cpk = prov_data['median']
+                    elif isinstance(prov_data, (int, float)):
+                        predicted_cpk = prov_data
+                    
+                    if predicted_cpk is not None:
+                        method = f'Province P{self.percentile}'
+                        confidence = 'Very Low'
+        
+        # Global mean fallback
+        if predicted_cpk is None:
+            predicted_cpk = self.global_mean
+            method = 'Global Mean'
             confidence = 'Very Low'
-            
+        
         error_pct = ERROR_BARS.get(confidence, 0.25)
+        price_low = predicted_cpk * (1 - error_pct)
+        price_high = predicted_cpk * (1 + error_pct)
+        
+        result = {
+            'predicted_cpk': round(predicted_cpk, 3),
+            'cpk_low': round(price_low, 3),
+            'cpk_high': round(price_high, 3),
+            'method': method,
+            'confidence': confidence,
+        }
+        
+        if distance_km and distance_km > 0:
+            result['predicted_cost'] = round(predicted_cpk * distance_km, 0)
+            result['cost_low'] = round(price_low * distance_km, 0)
+            result['cost_high'] = round(price_high * distance_km, 0)
+        
+        return result
+
+
+# ============================================
+# REGIONAL MODEL (Legacy Fallback)
+# Simple regional average model as ultimate fallback
+# ============================================
+class RegionalPredictor:
+    """
+    Simple regional CPK model as ultimate fallback.
+    
+    Uses 5-region matrix (Eastern, Western, Central, Northern, Southern)
+    to provide a baseline estimate when other models fail.
+    """
+    
+    def __init__(self, regional_cpk, city_to_region, global_mean=2.0):
+        self.regional_cpk = regional_cpk
+        self.city_to_region = city_to_region
+        self.global_mean = global_mean
+    
+    def predict(self, pickup_city, dest_city, distance_km=None,
+                pickup_region_override=None, dest_region_override=None):
+        """Predict using regional averages."""
+        p_can = CITY_TO_CANONICAL.get(pickup_city, pickup_city)
+        d_can = CITY_TO_CANONICAL.get(dest_city, dest_city)
+        
+        # Get regions
+        p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can) or pickup_region_override
+        d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can) or dest_region_override
+        
+        predicted_cpk = None
+        method = 'Regional'
+        confidence = 'Very Low'
+        
+        if p_region and d_region:
+            predicted_cpk = self.regional_cpk.get((p_region, d_region))
+            if predicted_cpk is not None:
+                method = 'Regional'
+        
+        if predicted_cpk is None:
+            predicted_cpk = self.global_mean
+            method = 'Global Mean'
+        
+        error_pct = ERROR_BARS.get(confidence, 0.35)
         price_low = predicted_cpk * (1 - error_pct)
         price_high = predicted_cpk * (1 + error_pct)
         
@@ -2482,21 +2568,42 @@ def load_models():
     else:
         distance_matrix = {}
     
-    # Load Index + Shrinkage model
-    rare_lane_path = os.path.join(MODEL_DIR, 'rare_lane_models.pkl')
+    # Load Index + Shrinkage model (90d Half-Life)
+    # Try new filename first, then fall back to old filename for backward compatibility
     index_shrink_predictor = None
-    if os.path.exists(rare_lane_path):
-        with open(rare_lane_path, 'rb') as f:
-            rare_lane_artifacts = pickle.load(f)
-        index_shrink_predictor = IndexShrinkagePredictor(rare_lane_artifacts)
+    index_shrink_paths = [
+        os.path.join(MODEL_DIR, 'index_shrinkage_90hl.pkl'),  # New filename
+        os.path.join(MODEL_DIR, 'rare_lane_models.pkl'),      # Legacy filename
+    ]
+    for index_path in index_shrink_paths:
+        if os.path.exists(index_path):
+            with open(index_path, 'rb') as f:
+                index_artifacts = pickle.load(f)
+            index_shrink_predictor = IndexShrinkagePredictor(index_artifacts)
+            break
     
-    # Load Blend model
-    blend_path = os.path.join(MODEL_DIR, 'new_lane_model_blend.pkl')
-    blend_predictor = None
-    if os.path.exists(blend_path):
-        with open(blend_path, 'rb') as f:
-            blend_artifacts = pickle.load(f)
-        blend_predictor = BlendPredictor(blend_artifacts)
+    # Load Spatial model (R150 P50 IDW) for new lanes
+    # Try new filename first, then fall back to old blend model for backward compatibility
+    spatial_predictor = None
+    spatial_paths = [
+        os.path.join(MODEL_DIR, 'spatial_r150_p50_idw.pkl'),  # New filename
+        os.path.join(MODEL_DIR, 'new_lane_model_blend.pkl'),   # Legacy filename (will create SpatialPredictor with limited features)
+    ]
+    for spatial_path in spatial_paths:
+        if os.path.exists(spatial_path):
+            with open(spatial_path, 'rb') as f:
+                spatial_artifacts = pickle.load(f)
+            spatial_predictor = SpatialPredictor(spatial_artifacts)
+            break
+    
+    # Build Regional predictor as ultimate fallback (from config data)
+    regional_predictor = None
+    city_to_region = config.get('city_to_region', {})
+    if city_to_region:
+        # Build regional CPK from historical data if available
+        regional_cpk = {}
+        # This will be populated at runtime from df_knn if available
+        regional_predictor = RegionalPredictor(regional_cpk, city_to_region, global_mean=2.0)
     
     return {
         'carrier_model': carrier_model,
@@ -2504,7 +2611,8 @@ def load_models():
         'df_knn': df_knn,
         'distance_matrix': distance_matrix,
         'index_shrink_predictor': index_shrink_predictor,
-        'blend_predictor': blend_predictor
+        'spatial_predictor': spatial_predictor,
+        'regional_predictor': regional_predictor
     }
 
 models = load_models()
@@ -2512,7 +2620,8 @@ config = models['config']
 df_knn = models['df_knn']
 DISTANCE_MATRIX = models['distance_matrix']
 index_shrink_predictor = models['index_shrink_predictor']
-blend_predictor = models['blend_predictor']
+spatial_predictor = models['spatial_predictor']
+regional_predictor = models['regional_predictor']
 
 FEATURES = config['FEATURES']
 ENTITY_MAPPING = config.get('ENTITY_MAPPING', 'Domestic')
@@ -2775,12 +2884,11 @@ def calculate_prices(pickup_ar, dest_ar, requested_vehicle_ar, distance_km, lane
     Calculate price starting with Flatbed Baseline -> Apply Vehicle Modifiers.
     
     PRICING CASCADE (Run on Flatbed Data):
-    1. RECENCY: If recent loads exist (within RECENCY_WINDOW days), use median
-    2. INDEX+SHRINKAGE: If ANY historical data exists for this lane, use Index+Shrinkage model
-    3. PROVINCE BLEND: For NEW lanes (no history), use 70% Province CPK + 30% City decomposition
-    4. REGIONAL BLEND: If Province Blend fails (missing province data), use 5-region CPK instead
-    5. CITY MULTIPLIERS: If no geographic data at all, use city multipliers only
-    6. DEFAULT: Last resort - use default CPK × distance
+    1. RECENCY (90d): If recent loads exist (within RECENCY_WINDOW days), use median
+    2. INDEX+SHRINKAGE (90d HL): If ANY historical data exists for this lane, use Index+Shrinkage model
+    3. SPATIAL R150 P50 IDW: For NEW lanes (no history), use spatial neighbor interpolation
+    4. REGIONAL: Fallback to 5-region averages if spatial fails
+    5. DEFAULT: Last resort - use default CPK × distance
     """
     lane = f"{pickup_ar} → {dest_ar}"
     
@@ -2794,28 +2902,35 @@ def calculate_prices(pickup_ar, dest_ar, requested_vehicle_ar, distance_km, lane
     
     # --- PRICING CASCADE (Run on Flatbed Data) ---
     if recent_count >= 1:
-        # 1. RECENCY MODEL: Use median of recent loads
+        # 1. RECENCY MODEL (90d): Use median of recent loads
         base_price = flatbed_data[flatbed_data['days_ago'] <= RECENCY_WINDOW]['total_carrier_price'].median()
-        model = 'Recency (Base)'
+        model = 'Recency (90d)'
         conf = 'High' if recent_count >= 5 else ('Medium' if recent_count >= 2 else 'Low')
         
     elif index_shrink_predictor and index_shrink_predictor.has_lane_data(lane):
-        # 2. INDEX + SHRINKAGE: Lane has ANY historical data (even if not recent)
-        # Uses Flatbed historical stats inside the model
+        # 2. INDEX + SHRINKAGE (90d HL): Lane has ANY historical data (even if not recent)
+        # Uses exponential decay weighting with 90-day half-life
         p = index_shrink_predictor.predict(pickup_ar, dest_ar, distance_km)
+        base_price, model, conf = p.get('predicted_cost'), f"Index+Shrink (90d HL)", p['confidence']
+        
+    elif spatial_predictor:
+        # 3. SPATIAL R150 P50 IDW: NEW lane with NO historical data
+        # Uses inverse-distance weighted CPK from nearby cities within 150km
+        # Falls back to Province P50 if not enough neighbors
+        p = spatial_predictor.predict(pickup_ar, dest_ar, distance_km,
+                                      pickup_region_override=pickup_region_override,
+                                      dest_region_override=dest_region_override)
         base_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
         
-    elif blend_predictor:
-        # 3-5. BLEND MODEL: NEW lane with NO historical data
-        # Internally tries: Province CPK → Regional CPK → City Multipliers
-        # Pass region overrides from coordinates if available
-        p = blend_predictor.predict(pickup_ar, dest_ar, distance_km,
-                                    pickup_region_override=pickup_region_override,
-                                    dest_region_override=dest_region_override)
+    elif regional_predictor:
+        # 4. REGIONAL FALLBACK: Use 5-region averages
+        p = regional_predictor.predict(pickup_ar, dest_ar, distance_km,
+                                       pickup_region_override=pickup_region_override,
+                                       dest_region_override=dest_region_override)
         base_price, model, conf = p.get('predicted_cost'), p['method'], p['confidence']
         
     else:
-        # 6. DEFAULT: Last resort fallback (no models available)
+        # 5. DEFAULT: Last resort fallback (no models available)
         base_price = distance_km * 1.8 if distance_km else None
         model, conf = 'Default CPK', 'Very Low'
 
@@ -2935,9 +3050,9 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
     if index_shrink_predictor:
         p = index_shrink_predictor.predict(pickup_ar, dest_ar, dist)
         res.update({'IndexShrink_Price': p.get('predicted_cost'), 'IndexShrink_Upper': p.get('cost_high'), 'IndexShrink_Method': p['method']})
-    if blend_predictor:
-        p = blend_predictor.predict(pickup_ar, dest_ar, dist)
-        res.update({'Blend_Price': p.get('predicted_cost'), 'Blend_Upper': p.get('cost_high'), 'Blend_Method': p['method']})
+    if spatial_predictor:
+        p = spatial_predictor.predict(pickup_ar, dest_ar, dist)
+        res.update({'Spatial_Price': p.get('predicted_cost'), 'Spatial_Upper': p.get('cost_high'), 'Spatial_Method': p['method']})
     return res
 
 def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, check_history=False,
@@ -2989,13 +3104,9 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
 # ============================================
 st.title("🚚 Freight Pricing Tool")
 model_status = []
-if index_shrink_predictor: model_status.append("✅ Index+Shrinkage")
-if blend_predictor:
-    # Check if using provinces (13) or regions (5)
-    if blend_predictor.using_provinces:
-        model_status.append("✅ Blend 0.7 (Province)")
-    else:
-        model_status.append("✅ Blend 0.7 (Region)")
+if index_shrink_predictor: model_status.append("✅ Index+Shrink (90d HL)")
+if spatial_predictor: model_status.append("✅ Spatial R150 IDW")
+if regional_predictor: model_status.append("✅ Regional Fallback")
 dist_status = f"✅ {len(DISTANCE_MATRIX):,} distances" if DISTANCE_MATRIX else ""
 st.caption(f"ML-powered pricing | Domestic | {' | '.join(model_status)} | {dist_status}")
 

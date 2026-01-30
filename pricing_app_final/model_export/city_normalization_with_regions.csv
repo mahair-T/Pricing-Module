@@ -1,0 +1,533 @@
+variant,canonical,region,province,latitude,longitude,is_province_correct,candidate_region,found_province_shape
+Jubail,الجبيل,Eastern,Eastern Province,27.03110691,49.5910493,True,Eastern,Eastern Province
+Al Jubail,الجبيل,Eastern,Eastern Province,27.03110691,49.5910493,True,Eastern,Eastern Province
+Al-Jubail,الجبيل,Eastern,Eastern Province,27.03110691,49.5910493,True,Eastern,Eastern Province
+Jubayl,الجبيل,Eastern,Eastern Province,27.03110691,49.5910493,True,Eastern,Eastern Province
+الجبيل,الجبيل,Eastern,Eastern Province,27.03110691,49.5910493,True,Eastern,Eastern Province
+Dammam,الدمام,Eastern,Eastern Province,26.41207719,50.08020949,True,Eastern,Eastern Province
+Damam,الدمام,Eastern,Eastern Province,26.41207719,50.08020949,True,Eastern,Eastern Province
+Al Dammam,الدمام,Eastern,Eastern Province,26.41207719,50.08020949,True,Eastern,Eastern Province
+الدمام,الدمام,Eastern,Eastern Province,26.41207719,50.08020949,True,Eastern,Eastern Province
+دمام,الدمام,Eastern,Eastern Province,26.41207719,50.08020949,True,Eastern,Eastern Province
+Jeddah,جدة,Western,Makkah Province,21.5493629,39.21358274,True,Western,Makkah Province
+Jiddah,جدة,Western,Makkah Province,21.5493629,39.21358274,True,Western,Makkah Province
+Jedda,جدة,Western,Makkah Province,21.5493629,39.21358274,True,Western,Makkah Province
+Jeda,جدة,Western,Makkah Province,21.5493629,39.21358274,True,Western,Makkah Province
+جدة,جدة,Western,Makkah Province,21.5493629,39.21358274,True,Western,Makkah Province
+جده,جدة,Western,Makkah Province,21.5493629,39.21358274,True,Western,Makkah Province
+Riyadh,الرياض,Central,Riyadh Province,24.66977271,46.69783445,True,Central,Riyadh Province
+Riyad,الرياض,Central,Riyadh Province,24.66977271,46.69783445,True,Central,Riyadh Province
+Al Riyadh,الرياض,Central,Riyadh Province,24.66977271,46.69783445,True,Central,Riyadh Province
+الرياض,الرياض,Central,Riyadh Province,24.66977271,46.69783445,True,Central,Riyadh Province
+رياض,الرياض,Central,Riyadh Province,24.66977271,46.69783445,True,Central,Riyadh Province
+Yanbu,ينبع,Western,Madinah Province,24.06548315,38.11984215,True,Western,Madinah Province
+Yenbu,ينبع,Western,Madinah Province,24.06548315,38.11984215,True,Western,Madinah Province
+Yanbo,ينبع,Western,Madinah Province,24.06548315,38.11984215,True,Western,Madinah Province
+ينبع,ينبع,Western,Madinah Province,24.06548315,38.11984215,True,Western,Madinah Province
+Sudair,سدير,Central,Riyadh Province,23.9846015,47.1228576,True,Central,Riyadh Province
+Sudayr,سدير,Central,Riyadh Province,23.9846015,47.1228576,True,Central,Riyadh Province
+سدير,سدير,Central,Riyadh Province,23.9846015,47.1228576,True,Central,Riyadh Province
+Al Hasa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Al-Hasa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Al Ahsa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Al-Ahsa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Ahsa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Hasa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Al Hofuf,Hofuf,Eastern,Eastern Province,25.380026,49.5887652,True,Eastern,Eastern Province
+الاحساء,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+الأحساء,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+الْأَحْسَاء,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+الإحساء,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Qassim,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+Al Qassim,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+Al-Qassim,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+Qaseem,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+Qasim,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+القصيم,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+قصيم,القصيم,Northern,Qassim Province,26.207826,43.483738,True,Northern,Qassim Province
+Al Kharj,الخرج,Central,Riyadh Province,24.16793487,47.30680069,True,Central,Riyadh Province
+Al-Kharj,الخرج,Central,Riyadh Province,24.16793487,47.30680069,True,Central,Riyadh Province
+Kharj,الخرج,Central,Riyadh Province,24.16793487,47.30680069,True,Central,Riyadh Province
+Al Khurj,الخرج,Central,Riyadh Province,24.16793487,47.30680069,True,Central,Riyadh Province
+الخرج,الخرج,Central,Riyadh Province,24.16793487,47.30680069,True,Central,Riyadh Province
+خرج,الخرج,Central,Riyadh Province,24.16793487,47.30680069,True,Central,Riyadh Province
+Rabigh,رابغ,Western,Makkah Province,22.63787831,39.15239128,True,Western,Makkah Province
+Rabegh,رابغ,Western,Makkah Province,22.63787831,39.15239128,True,Western,Makkah Province
+رابغ,رابغ,Western,Makkah Province,22.63787831,39.15239128,True,Western,Makkah Province
+Hail,حَائِل,Northern,Hail Province,27.51770854,41.69398413,True,Northern,Hail Province
+Haail,حَائِل,Northern,Hail Province,27.51770854,41.69398413,True,Northern,Hail Province
+Ha'il,حَائِل,Northern,Hail Province,27.51770854,41.69398413,True,Northern,Hail Province
+حائل,حَائِل,Northern,Hail Province,27.51770854,41.69398413,True,Northern,Hail Province
+حَائِل,حَائِل,Northern,Hail Province,27.51770854,41.69398413,True,Northern,Hail Province
+Jazan,جازان,Southern,Jazan Province,16.89018854,42.594648,True,Southern,Jazan Province
+Jizan,جازان,Southern,Jazan Province,16.89018854,42.594648,True,Southern,Jazan Province
+Gizan,جازان,Southern,Jazan Province,16.89018854,42.594648,True,Southern,Jazan Province
+Gazan,جازان,Southern,Jazan Province,16.89018854,42.594648,True,Southern,Jazan Province
+جازان,جازان,Southern,Jazan Province,16.89018854,42.594648,True,Southern,Jazan Province
+جيزان,جازان,Southern,Jazan Province,16.89018854,42.594648,True,Southern,Jazan Province
+Madinah,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+Madina,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+Medina,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+Al Madinah,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+المدينة,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+المدينه,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+المدينة المنورة,المدينة المنورة,Western,Madinah Province,24.45590363,39.61661361,True,Western,Madinah Province
+Turaif,طريف,Northern,Northern Borders Province,31.63301903,38.77688919,True,Northern,Northern Borders Province
+Turayf,طريف,Northern,Northern Borders Province,31.63301903,38.77688919,True,Northern,Northern Borders Province
+Tarif,طريف,Northern,Northern Borders Province,31.63301903,38.77688919,True,Northern,Northern Borders Province
+طريف,طريف,Northern,Northern Borders Province,31.63301903,38.77688919,True,Northern,Northern Borders Province
+Makkah,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+Mecca,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+Mekkah,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+Makka,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+مكة,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+مكه,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+مكة المكرمة,مكة المكرمة,Western,Makkah Province,21.43032907,39.83634631,True,Western,Makkah Province
+Taif,الطائف,Western,Makkah Province,21.3476881,40.48415801,True,Western,Makkah Province
+Tayef,الطائف,Western,Makkah Province,21.3476881,40.48415801,True,Western,Makkah Province
+Al Taif,الطائف,Western,Makkah Province,21.3476881,40.48415801,True,Western,Makkah Province
+الطائف,الطائف,Western,Makkah Province,21.3476881,40.48415801,True,Western,Makkah Province
+طائف,الطائف,Western,Makkah Province,21.3476881,40.48415801,True,Western,Makkah Province
+Tabuk,تبوك,Northern,Tabuk Province,28.40007787,36.54400242,True,Northern,Tabuk Province
+Tabouk,تبوك,Northern,Tabuk Province,28.40007787,36.54400242,True,Northern,Tabuk Province
+Tabook,تبوك,Northern,Tabuk Province,28.40007787,36.54400242,True,Northern,Tabuk Province
+تبوك,تبوك,Northern,Tabuk Province,28.40007787,36.54400242,True,Northern,Tabuk Province
+Shaqra,شقراء,Central,Riyadh Province,25.24320297,45.26072978,True,Central,Riyadh Province
+Shaqraa,شقراء,Central,Riyadh Province,25.24320297,45.26072978,True,Central,Riyadh Province
+شقراء,شقراء,Central,Riyadh Province,25.24320297,45.26072978,True,Central,Riyadh Province
+Skaka,سكاكا,Northern,Al Jouf Province,29.94271455,40.18488001,True,Northern,Al Jouf Province
+Sakaka,سكاكا,Northern,Al Jouf Province,29.94271455,40.18488001,True,Northern,Al Jouf Province
+سكاكا,سكاكا,Northern,Al Jouf Province,29.94271455,40.18488001,True,Northern,Al Jouf Province
+Al Baha,ٱلْبَاحَة,Southern,Al Bahah Province,20.04049641,41.4816814,True,Southern,Al Bahah Province
+Al-Baha,ٱلْبَاحَة,Southern,Al Bahah Province,20.04049641,41.4816814,True,Southern,Al Bahah Province
+Baha,ٱلْبَاحَة,Southern,Al Bahah Province,20.04049641,41.4816814,True,Southern,Al Bahah Province
+Bahah,ٱلْبَاحَة,Southern,Al Bahah Province,20.04049641,41.4816814,True,Southern,Al Bahah Province
+الباحة,ٱلْبَاحَة,Southern,Al Bahah Province,20.04049641,41.4816814,True,Southern,Al Bahah Province
+ٱلْبَاحَة,ٱلْبَاحَة,Southern,Al Bahah Province,20.04049641,41.4816814,True,Southern,Al Bahah Province
+Hafar Al Batin,حفر الباطن,Central,Eastern Province,28.38285319,45.97309586,True,Eastern,Eastern Province
+Hafr Al Batin,حفر الباطن,Central,Eastern Province,28.38285319,45.97309586,True,Eastern,Eastern Province
+Hafar al-Batin,حفر الباطن,Central,Eastern Province,28.38285319,45.97309586,True,Eastern,Eastern Province
+حفر الباطن,حفر الباطن,Central,Eastern Province,28.38285319,45.97309586,True,Eastern,Eastern Province
+Al Khurmah,الخرمة,Western,Makkah Province,21.91660541,42.02986639,True,Western,Makkah Province
+Khurmah,الخرمة,Western,Makkah Province,21.91660541,42.02986639,True,Western,Makkah Province
+الخرمة,الخرمة,Western,Makkah Province,21.91660541,42.02986639,True,Western,Makkah Province
+Ras Al Khair,راس الخير,Eastern,Eastern Province,27.4983987,49.1868235,True,Eastern,Eastern Province
+Ras al-Khair,راس الخير,Eastern,Eastern Province,27.4983987,49.1868235,True,Eastern,Eastern Province
+راس الخير,راس الخير,Eastern,Eastern Province,27.4983987,49.1868235,True,Eastern,Eastern Province
+Arar,عرعر,Northern,Northern Borders Province,30.88979676,41.21789987,True,Northern,Northern Borders Province
+Ar'ar,عرعر,Northern,Northern Borders Province,30.88979676,41.21789987,True,Northern,Northern Borders Province
+عرعر,عرعر,Northern,Northern Borders Province,30.88979676,41.21789987,True,Northern,Northern Borders Province
+Najran,نجران,Southern,Najran Province,17.54590321,44.23905053,True,Southern,Najran Province
+Nejran,نجران,Southern,Najran Province,17.54590321,44.23905053,True,Southern,Najran Province
+نجران,نجران,Southern,Najran Province,17.54590321,44.23905053,True,Southern,Najran Province
+Al Shuaiba,الشعيبة,Western,Makkah Province,27.8505383,42.7540251,False,Northern,Hail Province
+Shuaiba,الشعيبة,Western,Makkah Province,27.8505383,42.7540251,False,Northern,Hail Province
+الشعيبة,الشعيبة,Western,Makkah Province,27.8505383,42.7540251,False,Northern,Hail Province
+Duba,ضبا,Northern,Tabuk Province,27.34971154,35.69861962,True,Northern,Tabuk Province
+Dhuba,ضبا,Northern,Tabuk Province,27.34971154,35.69861962,True,Northern,Tabuk Province
+ضبا,ضبا,Northern,Tabuk Province,27.34971154,35.69861962,True,Northern,Tabuk Province
+Asir,عسير,Southern,Asir Province,19.0969062,42.8637875,True,Southern,Asir Province
+Aseer,عسير,Southern,Asir Province,19.0969062,42.8637875,True,Southern,Asir Province
+عسير,عسير,Southern,Asir Province,19.0969062,42.8637875,True,Southern,Asir Province
+Bisha,Bisha,Southern,Asir Province,19.98902783,42.61390742,True,Southern,Asir Province
+Bishah,Bisha,Southern,Asir Province,19.98902783,42.61390742,True,Southern,Asir Province
+بيشة,Bisha,Southern,Asir Province,19.98902783,42.61390742,True,Southern,Asir Province
+بيشه,Bisha,Southern,Asir Province,19.98902783,42.61390742,True,Southern,Asir Province
+Al-Muzahmiyya,Al-Muzahmiyya,Central,Riyadh Province,24.45155862,46.23038405,True,Central,Riyadh Province
+Al Muzahmiyya,Al-Muzahmiyya,Central,Riyadh Province,24.45155862,46.23038405,True,Central,Riyadh Province
+Muzahmiyya,Al-Muzahmiyya,Central,Riyadh Province,24.45155862,46.23038405,True,Central,Riyadh Province
+المزاحمية,Al-Muzahmiyya,Central,Riyadh Province,24.45155862,46.23038405,True,Central,Riyadh Province
+Al Ula,Al Ula,Northern,Madinah Province,26.59374805,37.93433379,True,Western,Madinah Province
+AlUla,Al Ula,Northern,Madinah Province,26.59374805,37.93433379,True,Western,Madinah Province
+Al-Ula,Al Ula,Northern,Madinah Province,26.59374805,37.93433379,True,Western,Madinah Province
+العلا,Al Ula,Northern,Madinah Province,26.59374805,37.93433379,True,Western,Madinah Province
+Al Qatif,Al Qatif,Eastern,Eastern Province,26.56397254,50.00477781,True,Eastern,Eastern Province
+Al-Qatif,Al Qatif,Eastern,Eastern Province,26.56397254,50.00477781,True,Eastern,Eastern Province
+Qatif,Al Qatif,Eastern,Eastern Province,26.56397254,50.00477781,True,Eastern,Eastern Province
+القطيف,Al Qatif,Eastern,Eastern Province,26.56397254,50.00477781,True,Eastern,Eastern Province
+Abha,Abha,Southern,Asir Province,18.23082019,42.52730285,True,Southern,Asir Province
+ابها,Abha,Southern,Asir Province,18.23082019,42.52730285,True,Southern,Asir Province
+أبها,Abha,Southern,Asir Province,18.23082019,42.52730285,True,Southern,Asir Province
+Hofuf,Hofuf,Eastern,Eastern Province,25.380026,49.5887652,True,Eastern,Eastern Province
+هفوف,Hofuf,Eastern,Eastern Province,25.380026,49.5887652,True,Eastern,Eastern Province
+Umluj,Umluj,Western,Tabuk Province,25.0211468,37.27084591,True,Northern,Tabuk Province
+Umloj,Umluj,Western,Tabuk Province,25.0211468,37.27084591,True,Northern,Tabuk Province
+أملج,Umluj,Western,Tabuk Province,25.0211468,37.27084591,True,Northern,Tabuk Province
+Thuwwal,Thuwwal,Western,Makkah Province,22.2756562,39.1132757,True,Western,Makkah Province
+Thuwal,Thuwwal,Western,Makkah Province,22.2756562,39.1132757,True,Western,Makkah Province
+ثول,Thuwwal,Western,Makkah Province,22.2756562,39.1132757,True,Western,Makkah Province
+Al Majma'ah,Al Majma'ah,Central,Riyadh Province,25.81525939,45.47264762,True,Central,Riyadh Province
+Al Majmaah,Al Majma'ah,Central,Riyadh Province,25.81525939,45.47264762,True,Central,Riyadh Province
+Majmaah,Al Majma'ah,Central,Riyadh Province,25.81525939,45.47264762,True,Central,Riyadh Province
+المجمعة,Al Majma'ah,Central,Riyadh Province,25.81525939,45.47264762,True,Central,Riyadh Province
+Khamis Mushait,Khamis Mushait,Southern,Asir Province,18.29292269,42.73770551,True,Southern,Asir Province
+Khamis Mushayt,Khamis Mushait,Southern,Asir Province,18.29292269,42.73770551,True,Southern,Asir Province
+Khamis,Khamis Mushait,Southern,Asir Province,18.29292269,42.73770551,True,Southern,Asir Province
+خميس مشيط,Khamis Mushait,Southern,Asir Province,18.29292269,42.73770551,True,Southern,Asir Province
+Al-Khobar,Al-Khobar,Eastern,Eastern Province,26.25433416,50.18747305,True,Eastern,Eastern Province
+Al Khobar,Al-Khobar,Eastern,Eastern Province,26.25433416,50.18747305,True,Eastern,Eastern Province
+Khobar,Al-Khobar,Eastern,Eastern Province,26.25433416,50.18747305,True,Eastern,Eastern Province
+الخبر,Al-Khobar,Eastern,Eastern Province,26.25433416,50.18747305,True,Eastern,Eastern Province
+Buraidah,Buraidah,Northern,Qassim Province,26.33474892,43.96676675,True,Northern,Qassim Province
+Buraydah,Buraidah,Northern,Qassim Province,26.33474892,43.96676675,True,Northern,Qassim Province
+بريدة,Buraidah,Northern,Qassim Province,26.33474892,43.96676675,True,Northern,Qassim Province
+Haradh,Haradh,Central,Eastern Province,24.1353686,49.0817124,True,Eastern,Eastern Province
+Harad,Haradh,Central,Eastern Province,24.1353686,49.0817124,True,Eastern,Eastern Province
+حرض,Haradh,Central,Eastern Province,24.1353686,49.0817124,True,Eastern,Eastern Province
+AMAALA,AMAALA,Western,Tabuk Province,26.6478803,36.2244491,True,Northern,Tabuk Province
+Amaala,AMAALA,Western,Tabuk Province,26.6478803,36.2244491,True,Northern,Tabuk Province
+أمالا,AMAALA,Western,Tabuk Province,26.6478803,36.2244491,True,Northern,Tabuk Province
+Beljurashi,Beljurashi,Southern,Al Bahah Province,19.8648875,41.5812154,True,Southern,Al Bahah Province
+Baljurashi,Beljurashi,Southern,Al Bahah Province,19.8648875,41.5812154,True,Southern,Al Bahah Province
+بلجرشي,Beljurashi,Southern,Al Bahah Province,19.8648875,41.5812154,True,Southern,Al Bahah Province
+Khafji,Khafji,Eastern,Eastern Province,28.4318707,48.48383824,True,Eastern,Eastern Province
+Al Khafji,Khafji,Eastern,Eastern Province,28.4318707,48.48383824,True,Eastern,Eastern Province
+الخفجي,Khafji,Eastern,Eastern Province,28.4318707,48.48383824,True,Eastern,Eastern Province
+Al Lith,Al Lith,Western,Makkah Province,20.34967385,40.23824758,True,Western,Makkah Province
+Al-Lith,Al Lith,Western,Makkah Province,20.34967385,40.23824758,True,Western,Makkah Province
+Lith,Al Lith,Western,Makkah Province,20.34967385,40.23824758,True,Western,Makkah Province
+الليث,Al Lith,Western,Makkah Province,20.34967385,40.23824758,True,Western,Makkah Province
+Dumah Al Jandal,Dumah Al Jandal,Northern,Al Jouf Province,29.80771303,39.85764055,True,Northern,Al Jouf Province
+Dumat Al Jandal,Dumah Al Jandal,Northern,Al Jouf Province,29.80771303,39.85764055,True,Northern,Al Jouf Province
+دومة الجندل,Dumah Al Jandal,Northern,Al Jouf Province,29.80771303,39.85764055,True,Northern,Al Jouf Province
+Nairyah,Nairyah,Eastern,Eastern Province,27.47253413,48.49228468,True,Eastern,Eastern Province
+Nariyah,Nairyah,Eastern,Eastern Province,27.47253413,48.49228468,True,Eastern,Eastern Province
+نعيرية,Nairyah,Eastern,Eastern Province,27.47253413,48.49228468,True,Eastern,Eastern Province
+Wadi Aldawaser,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+Wadi Ad dawaser,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+Wadi Dawaser,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+وادي الدواسر,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+Duwadmi,Duwadmi,Central,Riyadh Province,24.45869519,44.49837487,True,Central,Riyadh Province
+Dawadmi,Duwadmi,Central,Riyadh Province,24.45869519,44.49837487,True,Central,Riyadh Province
+الدوادمي,Duwadmi,Central,Riyadh Province,24.45869519,44.49837487,True,Central,Riyadh Province
+Tanajib,Tanajib,Eastern,Eastern Province,29.3671915,47.9670891,False,Outside,Outside
+تناجيب,Tanajib,Eastern,Eastern Province,29.3671915,47.9670891,False,Outside,Outside
+Buqaiq,Buqaiq,Eastern,Eastern Province,25.92649382,49.63457879,True,Eastern,Eastern Province
+Abqaiq,Buqaiq,Eastern,Eastern Province,25.92649382,49.63457879,True,Eastern,Eastern Province
+بقيق,Buqaiq,Eastern,Eastern Province,25.92649382,49.63457879,True,Eastern,Eastern Province
+Sharma,Sharma,Northern,Tabuk Province,28.0313,35.2383,True,Northern,Tabuk Province
+شرما,Sharma,Northern,Tabuk Province,28.0313,35.2383,True,Northern,Tabuk Province
+Haql,Haql,Northern,Tabuk Province,29.27627626,34.94321927,False,Northern,Al Jouf Province
+حقل,Haql,Northern,Tabuk Province,29.27627626,34.94321927,False,Northern,Al Jouf Province
+Ranyah,Ranyah,Western,Makkah Province,21.24765689,42.84258928,True,Western,Makkah Province
+رنية,Ranyah,Western,Makkah Province,21.24765689,42.84258928,True,Western,Makkah Province
+Al-Jumum,Al-Jumum,Western,Makkah Province,21.61306917,39.69057542,True,Western,Makkah Province
+Al Jumum,Al-Jumum,Western,Makkah Province,21.61306917,39.69057542,True,Western,Makkah Province
+الجموم,Al-Jumum,Western,Makkah Province,21.61306917,39.69057542,True,Western,Makkah Province
+Dahban,Dahban,Western,Makkah Province,21.9239552,39.1211497,True,Western,Makkah Province
+ذهبان,Dahban,Western,Makkah Province,21.9239552,39.1211497,True,Western,Makkah Province
+الرايس,Ar Rayis,Western,Madinah Province,23.5754811,38.6057798,True,Western,Madinah Province
+القويعية,Al Quwaiyah,Central,Riyadh Province,24.06538353,45.27839825,True,Central,Riyadh Province
+الطوال,Al Tuwal,Southern,Jazan Province,16.5279447,42.9733304,True,Southern,Jazan Province
+القنفذة,Al Qunfudhah,Western,Makkah Province,19.1295701,41.08014083,True,Western,Makkah Province
+ميسان,Maysan,Western,Makkah Province,31.8734002,47.1362125,False,Outside,Outside
+العمران,Al Omran,Eastern,Eastern Province,25.49439989,49.76766614,True,Eastern,Eastern Province
+الامواه,Al Amwah,Southern,Asir Province,18.7227268,43.6375314,True,Southern,Asir Province
+خليص,Khulais,Western,Makkah Province,22.0922692,39.34750282,True,Western,Makkah Province
+الخبراء,Al Khabra,Northern,Qassim Province,26.12465474,43.69356098,True,Northern,Qassim Province
+ضرية,Dariya,Northern,Qassim Province,24.98060149,43.10593602,True,Northern,Qassim Province
+صبيا,Sabya,Southern,Jazan Province,17.14485757,42.57650508,True,Southern,Jazan Province
+صفوى,Safwa,Eastern,Eastern Province,26.56409856,49.9098893,True,Eastern,Eastern Province
+Ar Rass,Ar Rass,Northern,Qassim Province,25.85981646,43.4983484,True,Northern,Qassim Province
+جلاجل,Jalajil,Central,Riyadh Province,25.30707481,45.79665706,True,Central,Riyadh Province
+القرية العليا,Qaryat Al Ulya,Eastern,Eastern Province,27.55948733,47.70094747,True,Eastern,Eastern Province
+صامته,Samtah,Southern,Jazan Province,16.58940081,42.93794841,True,Southern,Jazan Province
+الخريبة,Al Khuraybah,Western,Madinah Province,28.0672826,35.176372,False,Northern,Tabuk Province
+تنومة,Tanomah,Southern,Asir Province,18.93593268,42.17322468,True,Southern,Asir Province
+المجاردة,Al Majardah,Southern,Asir Province,19.12032678,41.92884923,True,Southern,Asir Province
+الافلاج,Al Aflaj (Layla),Central,Riyadh Province,22.58161618,46.43293547,True,Central,Riyadh Province
+بدر,Badr,Western,Madinah Province,23.78562031,38.78760174,True,Western,Madinah Province
+بني عمرو,Bani Amr,Southern,Asir Province,19.3834401,42.0583886,True,Southern,Asir Province
+حلي,Hali,Western,Makkah Province,18.825,41.3417,True,Western,Makkah Province
+النماص,Al Namas,Southern,Asir Province,19.11936039,42.13774536,True,Southern,Asir Province
+سلوى,Salwa,Eastern,Eastern Province,29.2958319,48.0766626,False,Outside,Outside
+العارضة,Al Aridah,Southern,Jazan Province,17.03563643,43.07171083,True,Southern,Jazan Province
+الطرف,Al Taraf,Eastern,Eastern Province,25.3611369,49.7245592,True,Eastern,Eastern Province
+Gurayat,Al Qurayyat,Northern,Al Jouf Province,31.29744114,37.41970683,True,Northern,Al Jouf Province
+المجمعه,Al Majma'ah,Central,Riyadh Province,25.81525939,45.47264762,True,Central,Riyadh Province
+تربة,Turabah,Western,Makkah Province,21.20859687,41.64358023,True,Western,Makkah Province
+املج,Umluj,Western,Tabuk Province,25.0211468,37.27084591,True,Northern,Tabuk Province
+البدائع,Al Badaya,Northern,Qassim Province,25.98580764,43.71812658,True,Northern,Qassim Province
+Sabt AI Alyah,Sabt Al Alaya,Southern,Asir Province,19.57955535,41.96811032,True,Southern,Asir Province
+ابو عريش,Abu Arish,Southern,Jazan Province,16.97239478,42.82861201,True,Southern,Jazan Province
+Samtah,Samtah,Southern,Jazan Province,16.58940081,42.93794841,True,Southern,Jazan Province
+المندق,Al Mandaq,Southern,Al Bahah Province,20.2200819,41.2507325,True,Southern,Al Bahah Province
+الغاط,Al Ghat,Central,Riyadh Province,26.02695038,44.95108252,True,Central,Riyadh Province
+بدر الجنوب,Badr Al Janoub,Southern,Najran Province,17.8802883,43.7190392,True,Southern,Najran Province
+القرى,Al Qura,Southern,Al Bahah Province,20.4231217,41.3209993,True,Southern,Al Bahah Province
+ساجر,Sajir,Central,Riyadh Province,25.1858677,44.6019551,True,Central,Riyadh Province
+Al Bi adyah,Al Badaya,Northern,Qassim Province,25.98580764,43.71812658,True,Northern,Qassim Province
+Sharurah,Sharurah,Southern,Najran Province,17.49026808,47.09746416,True,Southern,Najran Province
+تيماء,Tayma,Northern,Tabuk Province,27.61799461,38.52350186,True,Northern,Tabuk Province
+Duma AI Jandal,Dumah Al Jandal,Northern,Al Jouf Province,29.80771303,39.85764055,True,Northern,Al Jouf Province
+Nafi,Nifi,Central,Riyadh Province,24.86053812,45.58294641,True,Central,Riyadh Province
+سراة عبيدة,Sarat Abidah,Southern,Asir Province,18.08353236,43.12970139,True,Southern,Asir Province
+مستورة,Masturah,Western,Makkah Province,23.0916759,38.8414602,True,Western,Makkah Province
+Al Duwadimi,Duwadmi,Central,Riyadh Province,24.45869519,44.49837487,True,Central,Riyadh Province
+البطحاء,Al Batha,Eastern,Riyadh Province,24.1307881,51.5702234,False,Eastern,Eastern Province
+العرضيات,Al Ardiyat,Western,Makkah Province,19.5088554,41.6809724,True,Western,Makkah Province
+العيص,Al Ais,Western,Madinah Province,25.0599399,38.1160213,True,Western,Madinah Province
+صامطه,Samtah,Southern,Jazan Province,16.58940081,42.93794841,True,Southern,Jazan Province
+الحرجة,Al Harajah,Southern,Asir Province,17.9360084,43.3521141,True,Southern,Asir Province
+بيش,Baish,Southern,Jazan Province,17.374003,42.5362501,True,Southern,Jazan Province
+رجال المع,Rijal Alma,Southern,Asir Province,18.1521824,42.1572702,True,Southern,Asir Province
+الاسياح,Al Asyah,Northern,Qassim Province,26.91437973,44.13363645,True,Northern,Qassim Province
+بللسمر,Ballasmer,Southern,Asir Province,18.78569401,42.25678151,True,Southern,Asir Province
+ابحر,Obhur,Western,Makkah Province,21.7687734,39.1463903,True,Western,Makkah Province
+Wadi AI Dawasir,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+تثليث,Tathleeth,Southern,Asir Province,18.57971886,43.18384711,True,Southern,Asir Province
+Howtat Bin Tamim,Hotat Bani Tamim,Central,Riyadh Province,23.49653629,46.85503306,True,Central,Riyadh Province
+Al Ounfudhah,Al Qunfudhah,Western,Makkah Province,19.1295701,41.08014083,True,Western,Makkah Province
+شرورة,Sharurah,Southern,Najran Province,17.49026808,47.09746416,True,Southern,Najran Province
+المذنب,Al Mithnab,Northern,Qassim Province,25.88843051,44.20040942,True,Northern,Qassim Province
+Abu Arish,Abu Arish,Southern,Jazan Province,16.97239478,42.82861201,True,Southern,Jazan Province
+Afif,Afif,Central,Riyadh Province,23.93601368,42.87413233,True,Central,Riyadh Province
+يدمة,Yadamah,Southern,Najran Province,18.52661572,44.21387966,True,Southern,Najran Province
+سبت العلايا,Sabt Al Alaya,Southern,Asir Province,19.57955535,41.96811032,True,Southern,Asir Province
+Az Zulfi,Az Zulfi,Central,Riyadh Province,25.96540845,45.04100728,True,Central,Riyadh Province
+عفيف,Afif,Central,Riyadh Province,23.93601368,42.87413233,True,Central,Riyadh Province
+Bal|urashi,Beljurashi,Southern,Al Bahah Province,19.8648875,41.5812154,True,Southern,Al Bahah Province
+المظيلف,Al Mozaylif,Western,Makkah Province,19.5390124,41.0494841,False,Southern,Al Bahah Province
+بالجرشي,Beljurashi,Southern,Al Bahah Province,19.8648875,41.5812154,True,Southern,Al Bahah Province
+Hafar AI Batin,حفر الباطن,Central,Eastern Province,28.38285319,45.97309586,True,Eastern,Eastern Province
+الغزالة,Al Ghazalah,Northern,Hail Province,26.7921739,41.3159832,True,Northern,Hail Province
+الشماسية,Al Shamasiyah,Northern,Qassim Province,26.32081541,44.20769309,True,Northern,Qassim Province
+المخواة,Al Makhwah,Southern,Al Bahah Province,19.7615538,41.4343421,True,Southern,Al Bahah Province
+ثقيف,Thaqif,Western,Makkah Province,20.95,40.8,True,Western,Makkah Province
+الموسم,Al Mawsim,Southern,Jazan Province,24.8122092,46.7923886,False,Central,Riyadh Province
+ظهران الجنوب,Dhahran Al Janoub,Southern,Asir Province,17.6652253,43.5174213,True,Southern,Asir Province
+بني سعد,Bani Saad,Western,Makkah Province,20.9475788,40.8095699,True,Western,Makkah Province
+Muhayl,Muhayil,Southern,Asir Province,18.54161664,42.05365689,True,Southern,Asir Province
+حريملاء,Huraymila,Central,Riyadh Province,25.1137757,46.0987673,True,Central,Riyadh Province
+الدرب,Ad Darb,Southern,Jazan Province,17.7336268,42.2658282,True,Southern,Jazan Province
+النبهانية,Al Nabhaniya,Northern,Qassim Province,25.67527403,43.0327639,True,Northern,Qassim Province
+القوز,Al Qawz,Western,Makkah Province,18.9770615,41.3009321,True,Western,Makkah Province
+الشملي,Al Shamli,Northern,Hail Province,26.86661577,40.32247287,True,Northern,Hail Province
+ثار,Thar,Southern,Najran Province,17.4850321,47.1167237,True,Southern,Najran Province
+عنيزة,Unaizah,Northern,Qassim Province,26.09176307,43.98509598,True,Northern,Qassim Province
+AI Qurayyat,Al Qurayyat,Northern,Al Jouf Province,31.29744114,37.41970683,True,Northern,Al Jouf Province
+Dhalm,Zalim,Western,Makkah Province,22.7240723,42.1720867,True,Western,Makkah Province
+الوجه,Al Wajh,Western,Tabuk Province,26.24396603,36.4566441,True,Northern,Tabuk Province
+الجشة,Al Jishah,Eastern,Eastern Province,25.3878927,49.7516582,True,Eastern,Eastern Province
+الملك عبدالله,KAEC,Western,Makkah Province,22.4557935,39.1015974,True,Western,Makkah Province
+السليل,As Sulayyil,Central,Riyadh Province,20.47015723,45.57819958,True,Central,Riyadh Province
+بقعاء,Baqaa,Northern,Hail Province,27.88786013,42.41166337,True,Northern,Hail Province
+خيبر,Khaybar,Western,Madinah Province,25.69373908,39.29064752,True,Western,Madinah Province
+حوطة بني تميم,Hotat Bani Tamim,Central,Riyadh Province,23.49653629,46.85503306,True,Central,Riyadh Province
+مهد الذهب,Mahd Al Dhahab,Western,Madinah Province,23.58167452,41.01212704,True,Western,Madinah Province
+العقيق,Al Aqiq,Southern,Al Bahah Province,20.28287225,41.6499285,True,Southern,Al Bahah Province
+القريات,Al Qurayyat,Northern,Al Jouf Province,31.29744114,37.41970683,True,Northern,Al Jouf Province
+البكيرية,Al Bukayriyah,Northern,Qassim Province,26.1686379,43.68451673,True,Northern,Qassim Province
+احد رفيدة,Ahad Rafidah,Southern,Asir Province,18.19369785,42.83089871,True,Southern,Asir Province
+دخنة,Dukhna,Northern,Qassim Province,25.3562,43.6227,True,Northern,Qassim Province
+Oassim I Buraidfia,Buraidah,Northern,Qassim Province,26.33474892,43.96676675,True,Northern,Qassim Province
+قلوة,Qilwah,Southern,Al Bahah Province,19.9451086,41.2457101,True,Southern,Al Bahah Province
+سيهات,Saihat,Eastern,Eastern Province,26.47898391,50.03357399,True,Eastern,Eastern Province
+الحناكية,Al Hinakiyah,Western,Madinah Province,24.9073032,40.5330604,True,Western,Madinah Province
+AI Artawiyah,Al Artawiyah,Central,Riyadh Province,25.96171432,45.3416868,True,Central,Riyadh Province
+Hanak,Al Hinakiyah,Western,Madinah Province,24.9073032,40.5330604,True,Western,Madinah Province
+العيون,Al Oyoun,Eastern,Eastern Province,25.14474017,50.09111327,True,Eastern,Eastern Province
+الزلفي,Az Zulfi,Central,Riyadh Province,25.96540845,45.04100728,True,Central,Riyadh Province
+الحائط,Al Hait,Northern,Hail Province,25.9933108,40.4669092,True,Northern,Hail Province
+الاطاولة,Al Atawlah,Southern,Al Bahah Province,20.2096899,41.405689,True,Southern,Al Bahah Province
+حبونا,Habuna,Southern,Najran Province,17.8411031,44.0246759,True,Southern,Najran Province
+الكامل,Al Kamil,Western,Makkah Province,22.3650778,39.8990473,True,Western,Makkah Province
+Amala,AMAALA,Western,Tabuk Province,26.6478803,36.2244491,True,Northern,Tabuk Province
+احد المسارحة,Ahad Al Masarihah,Southern,Jazan Province,16.70869025,42.95238275,True,Southern,Jazan Province
+Rafha,Rafha,Northern,Northern Borders Province,29.62620588,43.53054048,True,Northern,Northern Borders Province
+عقلة الصقور,Uglat Asugour,Northern,Qassim Province,25.82709438,42.19323656,True,Northern,Qassim Province
+الافلاج ليلى,Al Aflaj (Layla),Central,,,,,,
+رفحاء,Rafha,Northern,Northern Borders Province,29.62620588,43.53054048,True,Northern,Northern Borders Province
+محايل,Muhayil,Southern,Asir Province,18.54161664,42.05365689,True,Southern,Asir Province
+راس تنورة,Ras Tanura,Eastern,Eastern Province,26.70831179,50.05707408,True,Eastern,Eastern Province
+الشنان,Al Shannan,Northern,Hail Province,27.17841185,42.43923459,True,Northern,Hail Province
+صامتة,Samtah,Southern,Jazan Province,16.58940081,42.93794841,True,Southern,Jazan Province
+اضم,Adam,Western,Makkah Province,20.5167,40.85,True,Western,Makkah Province
+الموية,Al Muwayh,Western,Makkah Province,22.74176,41.589691,True,Western,Makkah Province
+Al Barta,Al Batha,Eastern,Riyadh Province,24.1307881,51.5702234,False,Eastern,Eastern Province
+النعيرية,Nairyah,Eastern,Eastern Province,27.47253413,48.49228468,True,Eastern,Eastern Province
+طبرجل,Tubarjal,Northern,Al Jouf Province,30.48650995,38.28525025,True,Northern,Al Jouf Province
+بللحمر,Ballahmar,Southern,Asir Province,18.7925199,42.2559685,True,Southern,Asir Province
+الرس,Ar Rass,Northern,Qassim Province,25.85981646,43.4983484,True,Northern,Qassim Province
+رماح,Rumah,Central,Riyadh Province,25.5611,47.178,True,Central,Riyadh Province
+خيبر الجنوب,Khaybar Al Janoub,Southern,Asir Province,25.6857666,39.29208,False,Western,Madinah Province
+Sabya,Sabya,Southern,Jazan Province,17.14485757,42.57650508,True,Southern,Jazan Province
+Quraiyat,Al Qurayyat,Northern,Al Jouf Province,31.29744114,37.41970683,True,Northern,Al Jouf Province
+W-Dawasir,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+Dawasir,Wadi Aldawaser,Central,Riyadh Province,20.68354739,44.76058224,True,Central,Riyadh Province
+Jamoom,Al-Jumum,Western,Makkah Province,21.61306917,39.69057542,True,Western,Makkah Province
+Tabarjal,Tubarjal,Northern,Al Jouf Province,30.48650995,38.28525025,True,Northern,Al Jouf Province
+Hanakiya,Al Hinakiyah,Western,Madinah Province,24.9073032,40.5330604,True,Western,Madinah Province
+Al-Kamil,Al Kamil,Western,Makkah Province,22.3650778,39.8990473,True,Western,Makkah Province
+Al-Makhwah,Al Makhwah,Southern,Al Bahah Province,19.7615538,41.4343421,True,Southern,Al Bahah Province
+Duhknah,الدُّخنة,Central,Qassim Province,25.3355648,43.6087317,True,Northern,Qassim Province
+Onaizah,Unaizah,Central,Qassim Province,26.09176307,43.98509598,True,Northern,Qassim Province
+Uqlat as-Suqur,Uglat Asugour,Northern,Qassim Province,25.82709438,42.19323656,True,Northern,Qassim Province
+Ar Rawdah,الروضة,Central,Riyadh Province,19.579394,41.9859596,False,Southern,Asir Province
+Sadir,سدير,Central,Riyadh Province,23.9846015,47.1228576,True,Central,Riyadh Province
+Zulfi,Az Zulfi,Central,Riyadh Province,25.96540845,45.04100728,True,Central,Riyadh Province
+Ar AR,عرعر,Northern,Northern Borders Province,30.88979676,41.21789987,True,Northern,Northern Borders Province
+Hassa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+Al Nimrah,النمرة,Western,Makkah Province,19.5728755,41.6759889,True,Western,Makkah Province
+Shihat,شِحَات,Southern,Asir Province,32.8035826,21.8621694,False,Outside,Outside
+Howtat Bani Tamim,Hotat Bani Tamim,Central,Riyadh Province,23.49653629,46.85503306,True,Central,Riyadh Province
+AI Majmaa,Al Majma'ah,Central,Riyadh Province,25.81525939,45.47264762,True,Central,Riyadh Province
+Al Aflaj,Al Aflaj (Layla),Central,Riyadh Province,22.58161618,46.43293547,True,Central,Riyadh Province
+Aflaj,Al Aflaj (Layla),Central,Riyadh Province,22.58161618,46.43293547,True,Central,Riyadh Province
+Al Aflaj (Layla),Al Aflaj (Layla),Central,Riyadh Province,22.58161618,46.43293547,True,Central,Riyadh Province
+Layla,Al Aflaj (Layla),Central,Riyadh Province,22.58161618,46.43293547,True,Central,Riyadh Province
+Al Artawiyah,Al Artawiyah,Central,Riyadh Province,25.96171432,45.3416868,True,Central,Riyadh Province
+Al Ghat,Al Ghat,Central,Riyadh Province,26.02695038,44.95108252,True,Central,Riyadh Province
+Al Quwaiyah,Al Quwaiyah,Central,Riyadh Province,24.06538353,45.27839825,True,Central,Riyadh Province
+As Sulayyil,As Sulayyil,Central,Riyadh Province,20.47015723,45.57819958,True,Central,Riyadh Province
+AZ ZULFI,Az Zulfi,Central,Riyadh Province,25.96540845,45.04100728,True,Central,Riyadh Province
+Diriyah,Diriyah,Central,Riyadh Province,24.75888467,46.39876578,True,Central,Riyadh Province
+الدرعية,Diriyah,Central,Riyadh Province,24.75888467,46.39876578,True,Central,Riyadh Province
+Ad Dawadimi,Duwadmi,Central,Riyadh Province,24.45869519,44.49837487,True,Central,Riyadh Province
+Hotat Bani Tamim,Hotat Bani Tamim,Central,Riyadh Province,23.49653629,46.85503306,True,Central,Riyadh Province
+Huraymila,Huraymila,Central,Riyadh Province,25.1137757,46.0987673,True,Central,Riyadh Province
+Jalajil,Jalajil,Central,Riyadh Province,25.30707481,45.79665706,True,Central,Riyadh Province
+Nifi,Nifi,Central,Riyadh Province,24.86053812,45.58294641,True,Central,Riyadh Province
+Rumah,Rumah,Central,Riyadh Province,25.5611,47.178,True,Central,Riyadh Province
+Sajir,Sajir,Central,Riyadh Province,25.1858677,44.6019551,True,Central,Riyadh Province
+Hafar Al-Batin,حفر الباطن,Central,Eastern Province,28.38285319,45.97309586,True,Eastern,Eastern Province
+AFIF,Afif,Central,Riyadh Province,23.93601368,42.87413233,True,Central,Riyadh Province
+Tharmada,ضرما,Central,Riyadh Province,24.60446754,46.12373165,True,Central,Riyadh Province
+ضرما,ضرما,Central,Riyadh Province,24.60446754,46.12373165,True,Central,Riyadh Province
+AI Hasa,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+AL HASSA,الْأَحْسَاء,Eastern,Eastern Province,25.44539798,49.5750919,True,Eastern,Eastern Province
+AL MUBARRAZ,Al Mubarraz,Eastern,Eastern Province,25.4051051,49.5483671,True,Eastern,Eastern Province
+Al Hufuf,Hofuf,Eastern,Eastern Province,25.380026,49.5887652,True,Eastern,Eastern Province
+Al Mubarraz,Al Mubarraz,Eastern,Eastern Province,25.4051051,49.5483671,True,Eastern,Eastern Province
+Al-Hofuf,Hofuf,Eastern,Eastern Province,25.380026,49.5887652,True,Eastern,Eastern Province
+Al-Hufuf,Hofuf,Eastern,Eastern Province,25.380026,49.5887652,True,Eastern,Eastern Province
+Al-Mubarraz,Al Mubarraz,Eastern,Eastern Province,25.4051051,49.5483671,True,Eastern,Eastern Province
+Al Oyoun,Al Oyoun,Eastern,Eastern Province,25.14474017,50.09111327,True,Eastern,Eastern Province
+Al Uyun,Al Oyoun,Eastern,Eastern Province,25.14474017,50.09111327,True,Eastern,Eastern Province
+Al-Uyun,Al Oyoun,Eastern,Eastern Province,25.14474017,50.09111327,True,Eastern,Eastern Province
+Al Qaysumah,Al Qaysumah,Eastern,Eastern Province,28.30366959,46.11780719,True,Eastern,Eastern Province
+AL QAYSUMAH,Al Qaysumah,Eastern,Eastern Province,28.30366959,46.11780719,True,Eastern,Eastern Province
+القيصومة,Al Qaysumah,Eastern,Eastern Province,28.30366959,46.11780719,True,Eastern,Eastern Province
+Bqaiq,Buqaiq,Eastern,Eastern Province,25.92649382,49.63457879,True,Eastern,Eastern Province
+Dhahran,Dhahran,Eastern,Eastern Province,26.33534342,50.14180836,True,Eastern,Eastern Province
+الظهران,Dhahran,Eastern,Eastern Province,26.33534342,50.14180836,True,Eastern,Eastern Province
+خفجي,Khafji,Eastern,Eastern Province,28.4318707,48.48383824,True,Eastern,Eastern Province
+An Nuayriyah,Nairyah,Eastern,Eastern Province,27.47253413,48.49228468,True,Eastern,Eastern Province
+Ras Al khair,راس الخير,Eastern,Eastern Province,27.4983987,49.1868235,True,Eastern,Eastern Province
+Al Batha,Al Batha,Eastern,Riyadh Province,24.1307881,51.5702234,False,Eastern,Eastern Province
+Al Jishah,Al Jishah,Eastern,Eastern Province,25.3878927,49.7516582,True,Eastern,Eastern Province
+Al Omran,Al Omran,Eastern,Eastern Province,25.49439989,49.76766614,True,Eastern,Eastern Province
+Al Taraf,Al Taraf,Eastern,Eastern Province,25.3611369,49.7245592,True,Eastern,Eastern Province
+Marjan,Murjan,Eastern,Eastern Province,22.4763853,39.0985658,False,Western,Makkah Province
+Qaryat Al Ulya,Qaryat Al Ulya,Eastern,Eastern Province,27.55948733,47.70094747,True,Eastern,Eastern Province
+Ras Tanura,Ras Tanura,Eastern,Eastern Province,26.70831179,50.05707408,True,Eastern,Eastern Province
+RAS TANURA,Ras Tanura,Eastern,Eastern Province,26.70831179,50.05707408,True,Eastern,Eastern Province
+Safaniya,Safaniya,Eastern,Eastern Province,27.9378084,48.6608648,True,Eastern,Eastern Province
+Safwa,Safwa,Eastern,Eastern Province,26.56409856,49.9098893,True,Eastern,Eastern Province
+Saihat,Saihat,Eastern,Eastern Province,26.47898391,50.03357399,True,Eastern,Eastern Province
+Salwa,Salwa,Eastern,Eastern Province,29.2958319,48.0766626,False,Outside,Outside
+TURAIF,طريف,Northern,Northern Borders Province,31.63301903,38.77688919,True,Northern,Northern Borders Province
+Al Bukayriyah,Al Bukayriyah,Northern,Qassim Province,26.1686379,43.68451673,True,Northern,Qassim Province
+Bukayriyah,Al Bukayriyah,Northern,Qassim Province,26.1686379,43.68451673,True,Northern,Qassim Province
+Dukhna,Dukhna,Northern,Qassim Province,25.3562,43.6227,True,Northern,Qassim Province
+الدُّخنة,الدُّخنة,Northern,Qassim Province,25.3355648,43.6087317,True,Northern,Qassim Province
+Tubarjal,Tubarjal,Northern,Al Jouf Province,30.48650995,38.28525025,True,Northern,Al Jouf Province
+TUBARJAL,Tubarjal,Northern,Al Jouf Province,30.48650995,38.28525025,True,Northern,Al Jouf Province
+Al Asyah,Al Asyah,Northern,Qassim Province,26.91437973,44.13363645,True,Northern,Qassim Province
+Al Badaya,Al Badaya,Northern,Qassim Province,25.98580764,43.71812658,True,Northern,Qassim Province
+Al Ghazalah,Al Ghazalah,Northern,Hail Province,26.7921739,41.3159832,True,Northern,Hail Province
+Al Hait,Al Hait,Northern,Hail Province,25.9933108,40.4669092,True,Northern,Hail Province
+Al Khabra,Al Khabra,Northern,Qassim Province,26.12465474,43.69356098,True,Northern,Qassim Province
+Al Mithnab,Al Mithnab,Northern,Qassim Province,25.88843051,44.20040942,True,Northern,Qassim Province
+Al Nabhaniya,Al Nabhaniya,Northern,Qassim Province,25.67527403,43.0327639,True,Northern,Qassim Province
+Al Qurayyat,Al Qurayyat,Northern,Al Jouf Province,31.29744114,37.41970683,True,Northern,Al Jouf Province
+Al-Qurayyat,Al Qurayyat,Northern,Al Jouf Province,31.29744114,37.41970683,True,Northern,Al Jouf Province
+Al Shamasiyah,Al Shamasiyah,Northern,Qassim Province,26.32081541,44.20769309,True,Northern,Qassim Province
+Al Shamli,Al Shamli,Northern,Hail Province,26.86661577,40.32247287,True,Northern,Hail Province
+Al Shannan,Al Shannan,Northern,Hail Province,27.17841185,42.43923459,True,Northern,Hail Province
+Baqaa,Baqaa,Northern,Hail Province,27.88786013,42.41166337,True,Northern,Hail Province
+Dariya,Dariya,Northern,Qassim Province,24.98060149,43.10593602,True,Northern,Qassim Province
+Tayma,Tayma,Northern,Tabuk Province,27.61799461,38.52350186,True,Northern,Tabuk Province
+Uglat Asugour,Uglat Asugour,Northern,Qassim Province,25.82709438,42.19323656,True,Northern,Qassim Province
+Unaizah,Unaizah,Northern,Qassim Province,26.09176307,43.98509598,True,Northern,Qassim Province
+Ahad Rafidah,Ahad Rafidah,Southern,Asir Province,18.19369785,42.83089871,True,Southern,Asir Province
+Ad Darb,Ad Darb,Southern,Jazan Province,17.7336268,42.2658282,True,Southern,Jazan Province
+Ad-Darb,Ad Darb,Southern,Jazan Province,17.7336268,42.2658282,True,Southern,Jazan Province
+Ahad Al Masarihah,Ahad Al Masarihah,Southern,Jazan Province,16.70869025,42.95238275,True,Southern,Jazan Province
+Al Amwah,Al Amwah,Southern,Asir Province,18.7227268,43.6375314,True,Southern,Asir Province
+Al Aqiq,Al Aqiq,Southern,Al Bahah Province,20.28287225,41.6499285,True,Southern,Al Bahah Province
+Al Aridah,Al Aridah,Southern,Jazan Province,17.03563643,43.07171083,True,Southern,Jazan Province
+Al Atawlah,Al Atawlah,Southern,Al Bahah Province,20.2096899,41.405689,True,Southern,Al Bahah Province
+Al Harajah,Al Harajah,Southern,Asir Province,17.9360084,43.3521141,True,Southern,Asir Province
+Al Majardah,Al Majardah,Southern,Asir Province,19.12032678,41.92884923,True,Southern,Asir Province
+Al Makhwah,Al Makhwah,Southern,Al Bahah Province,19.7615538,41.4343421,True,Southern,Al Bahah Province
+Makhwah,Al Makhwah,Southern,Al Bahah Province,19.7615538,41.4343421,True,Southern,Al Bahah Province
+Al Mandaq,Al Mandaq,Southern,Al Bahah Province,20.2200819,41.2507325,True,Southern,Al Bahah Province
+Al-Mandaq,Al Mandaq,Southern,Al Bahah Province,20.2200819,41.2507325,True,Southern,Al Bahah Province
+Al Mawsim,Al Mawsim,Southern,Jazan Province,24.8122092,46.7923886,False,Central,Riyadh Province
+Al Namas,Al Namas,Southern,Asir Province,19.11936039,42.13774536,True,Southern,Asir Province
+AL NAMAS,Al Namas,Southern,Asir Province,19.11936039,42.13774536,True,Southern,Asir Province
+Al-Namas,Al Namas,Southern,Asir Province,19.11936039,42.13774536,True,Southern,Asir Province
+Al Qura,Al Qura,Southern,Al Bahah Province,20.4231217,41.3209993,True,Southern,Al Bahah Province
+Al Tuwal,Al Tuwal,Southern,Jazan Province,16.5279447,42.9733304,True,Southern,Jazan Province
+Al-Aidabi,Al-Aidabi,Southern,Jazan Province,17.215037,42.9806087,True,Southern,Jazan Province
+العيدابي,Al-Aidabi,Southern,Jazan Province,17.215037,42.9806087,True,Southern,Jazan Province
+Badr Al Janoub,Badr Al Janoub,Southern,Najran Province,17.8802883,43.7190392,True,Southern,Najran Province
+Baish,Baish,Southern,Jazan Province,17.374003,42.5362501,True,Southern,Jazan Province
+Baysh,Baish,Southern,Jazan Province,17.374003,42.5362501,True,Southern,Jazan Province
+Ballahmar,Ballahmar,Southern,Asir Province,18.7925199,42.2559685,True,Southern,Asir Province
+Ballasmer,Ballasmer,Southern,Asir Province,18.78569401,42.25678151,True,Southern,Asir Province
+Bani Amr,Bani Amr,Southern,Asir Province,19.3834401,42.0583886,True,Southern,Asir Province
+Dhahran Al Janoub,Dhahran Al Janoub,Southern,Asir Province,17.6652253,43.5174213,True,Southern,Asir Province
+Dhahran Al Janub,Dhahran Al Janoub,Southern,Asir Province,17.6652253,43.5174213,True,Southern,Asir Province
+Habuna,Habuna,Southern,Najran Province,17.8411031,44.0246759,True,Southern,Najran Province
+Khaybar Al Janoub,Khaybar Al Janoub,Southern,Asir Province,25.6857666,39.29208,False,Western,Madinah Province
+Muhayil,Muhayil,Southern,Asir Province,18.54161664,42.05365689,True,Southern,Asir Province
+Qilwah,Qilwah,Southern,Al Bahah Province,19.9451086,41.2457101,True,Southern,Al Bahah Province
+Rijal Alma,Rijal Alma,Southern,Asir Province,18.1521824,42.1572702,True,Southern,Asir Province
+Sabt Al Alaya,Sabt Al Alaya,Southern,Asir Province,19.57955535,41.96811032,True,Southern,Asir Province
+Sarat Abidah,Sarat Abidah,Southern,Asir Province,18.08353236,43.12970139,True,Southern,Asir Province
+Tanomah,Tanomah,Southern,Asir Province,18.93593268,42.17322468,True,Southern,Asir Province
+Tathleeth,Tathleeth,Southern,Asir Province,18.57971886,43.18384711,True,Southern,Asir Province
+Tathlith,Tathleeth,Southern,Asir Province,18.57971886,43.18384711,True,Southern,Asir Province
+Thar,Thar,Southern,Najran Province,17.4850321,47.1167237,True,Southern,Najran Province
+Yadamah,Yadamah,Southern,Najran Province,18.52661572,44.21387966,True,Southern,Najran Province
+AL MUDHAYLIF,Al Mozaylif,Western,Makkah Province,19.5390124,41.0494841,False,Southern,Al Bahah Province
+Al Mozaylif,Al Mozaylif,Western,Makkah Province,19.5390124,41.0494841,False,Southern,Al Bahah Province
+Al-Mudhaylif,Al Mozaylif,Western,Makkah Province,19.5390124,41.0494841,False,Southern,Al Bahah Province
+Adam,Adam,Western,Makkah Province,20.5167,40.85,True,Western,Makkah Province
+Al Ais,Al Ais,Western,Madinah Province,25.0599399,38.1160213,True,Western,Madinah Province
+Al Ardiyat,Al Ardiyat,Western,Makkah Province,19.5088554,41.6809724,True,Western,Makkah Province
+Al Hinakiyah,Al Hinakiyah,Western,Madinah Province,24.9073032,40.5330604,True,Western,Madinah Province
+Al Kamil,Al Kamil,Western,Makkah Province,22.3650778,39.8990473,True,Western,Makkah Province
+Al Khuraybah,Al Khuraybah,Western,Madinah Province,28.0672826,35.176372,False,Northern,Tabuk Province
+Al Muwayh,Al Muwayh,Western,Makkah Province,22.74176,41.589691,True,Western,Makkah Province
+Al Qawz,Al Qawz,Western,Makkah Province,18.9770615,41.3009321,True,Western,Makkah Province
+Al Qunfudhah,Al Qunfudhah,Western,Makkah Province,19.1295701,41.08014083,True,Western,Makkah Province
+Al Qunfudah,Al Qunfudhah,Western,Makkah Province,19.1295701,41.08014083,True,Western,Makkah Province
+Al-Qunfudhah,Al Qunfudhah,Western,Makkah Province,19.1295701,41.08014083,True,Western,Makkah Province
+Al Wajh,Al Wajh,Western,Tabuk Province,26.24396603,36.4566441,True,Northern,Tabuk Province
+Al-Wajh,Al Wajh,Western,Tabuk Province,26.24396603,36.4566441,True,Northern,Tabuk Province
+Ar Rayis,Ar Rayis,Western,Madinah Province,23.5754811,38.6057798,True,Western,Madinah Province
+Badr,Badr,Western,Madinah Province,23.78562031,38.78760174,True,Western,Madinah Province
+Bani Saad,Bani Saad,Western,Makkah Province,20.9475788,40.8095699,True,Western,Makkah Province
+Hali,Hali,Western,Makkah Province,18.825,41.3417,True,Western,Makkah Province
+KAEC,KAEC,Western,Makkah Province,22.4557935,39.1015974,True,Western,Makkah Province
+Khaybar,Khaybar,Western,Madinah Province,25.69373908,39.29064752,True,Western,Madinah Province
+Khulais,Khulais,Western,Makkah Province,22.0922692,39.34750282,True,Western,Makkah Province
+Mahd Al Dhahab,Mahd Al Dhahab,Western,Madinah Province,23.58167452,41.01212704,True,Western,Madinah Province
+Masturah,Masturah,Western,Makkah Province,23.0916759,38.8414602,True,Western,Makkah Province
+Maysan,Maysan,Western,Makkah Province,31.8734002,47.1362125,False,Outside,Outside
+Obhur,Obhur,Western,Makkah Province,21.7687734,39.1463903,True,Western,Makkah Province
+Thaqif,Thaqif,Western,Makkah Province,20.95,40.8,True,Western,Makkah Province
+Turabah,Turabah,Western,Makkah Province,21.20859687,41.64358023,True,Western,Makkah Province
+Zalim,Zalim,Western,Makkah Province,22.7240723,42.1720867,True,Western,Makkah Province
+Al Humaij,Al Humaij,Western,Makkah Province,25.0347724,41.2256158,False,Western,Madinah Province
+Al-Bahah,ٱلْبَاحَة,Southern,Al Bahah Province,20.0129,41.4677,TRUE,Southern,Al Bahah Province
+Al-Madina Al-Munawwara,المدينة المنورة,Western,Madinah Province,24.4559,39.6166,TRUE,Western,Madinah Province
+Assir,عسير,Southern,Asir Province,18.2164,42.5053,TRUE,Southern,Asir Province
+Dhurma,ضرما,Central,Riyadh Province,24.6,46.15,TRUE,Central,Riyadh Province
+Dubaa,ضبا,Northern,Tabuk Province,27.35,35.69,TRUE,Northern,Tabuk Province
+Hafer Batin,حفر الباطن,Eastern,Eastern Province,28.4328,45.9708,TRUE,Eastern,Eastern Province
+King Abdullah,KAEC,Western,Makkah Province,22.4045,39.1032,TRUE,Western,Makkah Province
+Makkah Al-Mukarrama,مكة المكرمة,Western,Makkah Province,21.4303,39.8263,TRUE,Western,Makkah Province

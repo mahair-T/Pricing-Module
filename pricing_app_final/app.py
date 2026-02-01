@@ -5151,11 +5151,16 @@ with tab2:
                     for v_input in vehicles_to_price:
                         # Normalize vehicle name (could be English or Arabic from CSV)
                         v_ar = to_arabic_vehicle(v_input)
-                        # If output is default but input wasn't default, try to standard english first
-                        if v_ar == DEFAULT_VEHICLE_AR and v_input not in [DEFAULT_VEHICLE_AR, 'Flatbed Trailer']:
-                             # Try as english
-                             v_en_norm = to_english_vehicle(v_input)
-                             v_ar = to_arabic_vehicle(v_en_norm)
+                        
+                        # If output is default but input wasn't default, try fuzzy matching as fallback
+                        if v_ar == DEFAULT_VEHICLE_AR and v_input not in [DEFAULT_VEHICLE_AR, 'Flatbed Trailer', '']:
+                            # Try fuzzy matching using existing RapidFuzz
+                            if RAPIDFUZZ_AVAILABLE:
+                                candidates = list(VEHICLE_TYPE_EN.keys()) + list(VEHICLE_TYPE_AR.keys())
+                                matches = process.extract(str(v_input).strip(), candidates, scorer=fuzz.token_sort_ratio, limit=1)
+                                if matches and matches[0][1] >= 60:  # 60% threshold
+                                    best_match = matches[0][0]
+                                    v_ar = to_arabic_vehicle(best_match)
 
                         # Skip if normalization failed completely (safe fallback)
                         if not v_ar: v_ar = DEFAULT_VEHICLE_AR

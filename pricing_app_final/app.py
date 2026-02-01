@@ -4459,25 +4459,25 @@ with tab2:
                         
                         # Set defaults if detected
                         def_prov_idx = 0
-                        def_reg_idx = 0
                         
-                        PROVINCES_LIST = sorted(list(PROVINCE_TO_REGION.keys()))
-                        REGIONS_LIST = sorted(list(set(PROVINCE_TO_REGION.values())))
+                        # Add Placeholder
+                        PROVINCES_LIST = ["Select Province..."] + sorted(list(PROVINCE_TO_REGION.keys()))
                         
                         if det_prov and det_prov in PROVINCES_LIST:
                             def_prov_idx = PROVINCES_LIST.index(det_prov)
                             st.caption(f"📍 Detected: {det_prov}")
-                            
-                        if det_reg and det_reg in REGIONS_LIST:
-                            def_reg_idx = REGIONS_LIST.index(det_reg)
                         
                         # Override Dropdowns
                         sel_prov = st.selectbox("Province", options=PROVINCES_LIST, index=def_prov_idx, key=f"prov_{city_name}")
-                        sel_reg = st.selectbox("Region", options=REGIONS_LIST, index=def_reg_idx, key=f"reg_{city_name}")
+                        
+                        # Infer Region (Hidden from user)
+                        inferred_reg = PROVINCE_TO_REGION.get(sel_prov, "Central") if sel_prov != "Select Province..." else None
 
                         if st.button("Save New City", key=f"save_{city_name}", use_container_width=True):
                             if new_lat == 0 or new_lon == 0:
                                 st.error("Enter valid coordinates")
+                            elif sel_prov == "Select Province...":
+                                st.error("Please select a valid Province")
                             else:
                                 st.session_state.city_resolutions[city_name] = {
                                     'type': 'new_city',
@@ -4485,7 +4485,7 @@ with tab2:
                                     'latitude': new_lat,
                                     'longitude': new_lon,
                                     'province': sel_prov,
-                                    'region': sel_reg
+                                    'region': inferred_reg
                                 }
                                 st.rerun()
         

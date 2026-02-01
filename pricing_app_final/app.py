@@ -3412,7 +3412,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             # LINEAR TRANSFORM: Apply port transform to domestic prediction
             buy_price = apply_port_transform(buy_price, truck_type)
             buy_price = round_to_nearest(buy_price, 100)
-            model_used = f"{model_used} + Port Transform"
+            model_used = f"Domestic {model_used} + Port Transform"
         
         # Apply margin after price determination
         if buy_price:

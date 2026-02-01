@@ -4432,7 +4432,8 @@ with tab2:
 
                 with c2:
                     # Manual / Ignore Options
-                    action_mode = st.radio("Manual Action:", ["Select Action...", "Add New City", "Ignore (Skip Routes)"], key=f"rad_{city_name}")
+                    # default index 0 (Input Coordinates)
+                    action_mode = st.radio("Manual Action:", ["Input City Coordinates", "Ignore (Skip Routes)"], key=f"rad_{city_name}")
                     
                     if action_mode == "Ignore (Skip Routes)":
                         st.warning("Routes with this city will be excluded.")
@@ -4443,26 +4444,48 @@ with tab2:
                             }
                              st.rerun()
                              
-                    elif action_mode == "Add New City":
-                        st.markdown("**Enter Coordinates:**")
-                        new_lat = st.number_input("Latitude", key=f"lat_{city_name}", format="%.6f")
-                        new_lon = st.number_input("Longitude", key=f"lon_{city_name}", format="%.6f")
+                    elif action_mode == "Input City Coordinates":
+                        # st.markdown("**Enter Coordinates:**")
+                        col_lat, col_lon = st.columns(2)
+                        with col_lat:
+                            new_lat = st.number_input("Latitude", key=f"lat_{city_name}", format="%.6f")
+                        with col_lon:
+                            new_lon = st.number_input("Longitude", key=f"lon_{city_name}", format="%.6f")
                         
+                        # Reactive Detection
+                        det_prov, det_reg = None, None
+                        if new_lat != 0 and new_lon != 0:
+                            det_prov, det_reg = get_province_from_coordinates(new_lat, new_lon)
+                        
+                        # Set defaults if detected
+                        def_prov_idx = 0
+                        def_reg_idx = 0
+                        
+                        PROVINCES_LIST = sorted(list(PROVINCE_TO_REGION.keys()))
+                        REGIONS_LIST = sorted(list(set(PROVINCE_TO_REGION.values())))
+                        
+                        if det_prov and det_prov in PROVINCES_LIST:
+                            def_prov_idx = PROVINCES_LIST.index(det_prov)
+                            st.caption(f"📍 Detected: {det_prov}")
+                            
+                        if det_reg and det_reg in REGIONS_LIST:
+                            def_reg_idx = REGIONS_LIST.index(det_reg)
+                        
+                        # Override Dropdowns
+                        sel_prov = st.selectbox("Province", options=PROVINCES_LIST, index=def_prov_idx, key=f"prov_{city_name}")
+                        sel_reg = st.selectbox("Region", options=REGIONS_LIST, index=def_reg_idx, key=f"reg_{city_name}")
+
                         if st.button("Save New City", key=f"save_{city_name}", use_container_width=True):
                             if new_lat == 0 or new_lon == 0:
                                 st.error("Enter valid coordinates")
                             else:
-                                prov, reg = get_province_from_coordinates(new_lat, new_lon)
-                                if not prov: 
-                                    prov, reg = None, "Central"
-                                
                                 st.session_state.city_resolutions[city_name] = {
                                     'type': 'new_city',
                                     'canonical': city_name,
                                     'latitude': new_lat,
                                     'longitude': new_lon,
-                                    'province': prov,
-                                    'region': reg
+                                    'province': sel_prov,
+                                    'region': sel_reg
                                 }
                                 st.rerun()
         

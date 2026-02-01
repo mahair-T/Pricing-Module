@@ -4847,11 +4847,20 @@ with tab2:
                 st.warning(err)
             st.session_state.flush_errors = []  # Clear after showing
         
-        # Separate missing/new distances from existing
-        missing_distances = {k: v for k, v in distance_results.items() 
-                           if v['distance'] == 0 or v['source'] == 'Missing'}
-        existing_distances = {k: v for k, v in distance_results.items() 
-                            if v['distance'] > 0 and v['source'] != 'Missing'}
+        # Separate missing/new distances from existing (considering user edits)
+        # Initialize distance_edits if not exists
+        if 'distance_edits' not in st.session_state:
+            st.session_state.distance_edits = {}
+        
+        missing_distances = {}
+        existing_distances = {}
+        for k, v in distance_results.items():
+            # Use edited value if exists, else original
+            current_dist = st.session_state.distance_edits.get(k, v['distance'])
+            if current_dist == 0 or (current_dist == v['distance'] and v['source'] == 'Missing'):
+                missing_distances[k] = v
+            else:
+                existing_distances[k] = v
         
         # UI: Dashboard Stats - Aligned with bottom navigation [1, 1, 1], centered
         # CSS to center metrics within their columns

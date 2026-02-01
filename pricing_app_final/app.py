@@ -4903,11 +4903,9 @@ with tab2:
         
         c_stat1, c_stat2, c_refresh = st.columns([1, 1, 1])
         
-        with c_stat1:
-            st.metric("⚠️ Missing Distances", len(missing_distances))
-        
-        with c_stat2:
-            st.metric("✅ Ready to Price", len(existing_distances))
+        # Use placeholders for metrics - will be filled AFTER edit processing
+        metric_placeholder_1 = c_stat1.empty()
+        metric_placeholder_2 = c_stat2.empty()
         
         with c_refresh:
             st.markdown("<br>", unsafe_allow_html=True)  # Align with metrics
@@ -5010,8 +5008,13 @@ with tab2:
             current_dist = st.session_state.distance_edits.get(pair_key, info['distance'])
             if current_dist == 0 and not info['user_override']:
                 missing_count += 1
-                
+        
+        ready_count = len(distance_results) - missing_count
         all_resolved = missing_count == 0
+        
+        # NOW fill in the dashboard metric placeholders with correct counts
+        metric_placeholder_1.metric("⚠️ Missing Distances", missing_count)
+        metric_placeholder_2.metric("✅ Ready to Price", ready_count)
         
         # Navigation
         st.markdown("---")

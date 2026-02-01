@@ -75,9 +75,12 @@ PROVINCE_TO_REGION = {
 # Using a function to access session_state (initialized on first access)
 def get_city_coordinates():
     """Get CITY_COORDINATES from session state (persists across reruns)."""
-    if 'CITY_COORDINATES' not in st.session_state:
-        st.session_state.CITY_COORDINATES = {}
-    return st.session_state.CITY_COORDINATES
+    try:
+        if 'CITY_COORDINATES' not in st.session_state:
+            st.session_state.CITY_COORDINATES = {}
+        return st.session_state.CITY_COORDINATES
+    except:
+        return {}  # Return empty dict during startup (before session_state exists)
 
 # ============================================
 # GEOJSON LOADING FOR PROVINCE DETECTION
@@ -3222,15 +3225,19 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False, check_
     if pickup_en and dest_en:
         should_log = True
         
-        # Skip Google Maps for cities with manual coordinates
+        # Skip Google Maps for cities added manually with coordinates
+        # Check city_resolutions directly (only during bulk wizard)
         try:
-            city_coords = get_city_coordinates()
-            has_manual_pickup = pickup_ar in city_coords or p_can in city_coords
-            has_manual_dest = dest_ar in city_coords or d_can in city_coords
-            if has_manual_pickup or has_manual_dest:
-                should_log = False  # User must input distance manually in Step 2
-        except NameError:
-            pass  # CITY_COORDINATES not yet initialized during startup
+            if 'city_resolutions' in st.session_state:
+                resolutions = st.session_state.city_resolutions
+                # Check if pickup or dest is a new_city (user-provided coordinates)
+                pickup_res = resolutions.get(pickup_ar) or resolutions.get(p_can)
+                dest_res = resolutions.get(dest_ar) or resolutions.get(d_can)
+                if (pickup_res and pickup_res.get('type') == 'new_city') or \
+                   (dest_res and dest_res.get('type') == 'new_city'):
+                    should_log = False  # User must input distance manually in Step 2
+        except:
+            pass  # Not in bulk wizard context
         
         # If check_history is True, only log if at least one city has historical data
         # (Used by Master Grid to avoid logging routes where neither city has any history)

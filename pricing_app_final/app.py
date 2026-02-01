@@ -4995,12 +4995,20 @@ with tab2:
                         
                         # If different from original, store as edit
                         if abs(new_val - original_val) > 0.001:
-                            st.session_state.distance_edits[key] = new_val
+                            if st.session_state.distance_edits.get(key) != new_val:
+                                st.session_state.distance_edits[key] = new_val
+                                st.session_state.distance_edit_changed = True
                         elif key in st.session_state.distance_edits:
                             # Reverted to original
                             del st.session_state.distance_edits[key]
+                            st.session_state.distance_edit_changed = True
                 except:
                     pass
+            
+            # Trigger rerun to update Status column and dashboard
+            if st.session_state.get('distance_edit_changed'):
+                del st.session_state.distance_edit_changed
+                st.rerun()
         
         # Recalculate missing based on edits
         missing_count = 0

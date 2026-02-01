@@ -4123,13 +4123,15 @@ with tab2:
 
                 with btn_col2:
                     # Logic to disable button if requirements aren't met
-                    is_ready = username and selected_vehicles
+                    # Relax requirement: Allow empty selected_vehicles IF CSV has vehicle column (column 3)
+                    has_vehicle_col = len(r_df.columns) > 2
+                    is_ready = username and (selected_vehicles or has_vehicle_col)
                     
                     if st.button("▶️ Analyze Cities", type="primary", use_container_width=True, disabled=not is_ready):
                         if not username:
                             st.error("Please enter your name above.")
-                        elif not selected_vehicles:
-                            st.error("Please select at least one vehicle type.")
+                        elif not selected_vehicles and not has_vehicle_col:
+                            st.error("Please select at least one vehicle type OR ensure your CSV has a vehicle column (Col 3).")
                         else:
                             # --- PROCESSING LOGIC STARTS HERE ---
                             progress_bar = st.progress(0)

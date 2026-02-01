@@ -5091,9 +5091,25 @@ with tab2:
                         # Let the function look up the distance naturally to get correct source
                         dist_override = None
                     
+                    
+                    # Determine vehicles to price
+                    # If global selection exists, use it. Otherwise use CSV row vehicle.
+                    vehicles_to_price = selected_vehicles
+                    if not vehicles_to_price and row.get('vehicle_raw'):
+                        vehicles_to_price = [row['vehicle_raw']]
+                    
                     # Price for each selected vehicle
-                    for v_en in selected_vehicles:
-                        v_ar = to_arabic_vehicle(v_en)
+                    for v_input in vehicles_to_price:
+                        # Normalize vehicle name (could be English or Arabic from CSV)
+                        v_ar = to_arabic_vehicle(v_input)
+                        # If output is default but input wasn't default, try to standard english first
+                        if v_ar == DEFAULT_VEHICLE_AR and v_input not in [DEFAULT_VEHICLE_AR, 'Flatbed Trailer']:
+                             # Try as english
+                             v_en_norm = to_english_vehicle(v_input)
+                             v_ar = to_arabic_vehicle(v_en_norm)
+
+                        # Skip if normalization failed completely (safe fallback)
+                        if not v_ar: v_ar = DEFAULT_VEHICLE_AR
                         
                         result = lookup_route_stats(
                             pickup_ar, dest_ar, v_ar,

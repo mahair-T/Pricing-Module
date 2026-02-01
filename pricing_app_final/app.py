@@ -2174,7 +2174,7 @@ DEFAULT_VEHICLE_EN = 'Flatbed Trailer'
 # ============================================
 # TRUCK TYPES (Domestic vs Port Pricing)
 # ============================================
-TRUCK_TYPES = ['Domestic', 'Port Direct', 'Port Indirect']
+TRUCK_TYPES = ['Domestic', 'Port Direct', 'Port Roundtrip']
 DEFAULT_TRUCK_TYPE = 'Domestic'
 
 def to_english_vehicle(vtype_ar):
@@ -2735,7 +2735,7 @@ def get_port_lane_data(pickup_ar, dest_ar, load_type):
     - effective_dest: The true drop-off location (important for Trip loads)
     
     For Port Direct: pickup_city → destination_city (normal domestic-style lane)
-    For Port Indirect (Trip): pickup_city → effective_dest (true_drop_off is the real destination)
+    For Port Roundtrip (Trip): pickup_city → effective_dest (true_drop_off is the real destination)
     
     Args:
         pickup_ar: Pickup city in Arabic
@@ -3115,7 +3115,7 @@ def apply_port_transform(domestic_price, truck_type):
     
     Args:
         domestic_price: Base domestic price (SAR)
-        truck_type: 'Domestic', 'Port Direct', or 'Port Indirect'
+        truck_type: 'Domestic', 'Port Direct', or 'Port Roundtrip'
     
     Returns:
         Transformed price (same as domestic if Domestic type or no port model)
@@ -3130,7 +3130,7 @@ def apply_port_transform(domestic_price, truck_type):
     
     if truck_type == 'Port Direct':
         params = transforms.get('Direct', transforms.get('fallback', {}))
-    elif truck_type == 'Port Indirect':
+    elif truck_type == 'Port Roundtrip':
         params = transforms.get('Trip', transforms.get('fallback', {}))
     else:
         return domestic_price
@@ -3449,6 +3449,16 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
                 # Port data doesn't have shipper prices - set to None
                 disp_hs_min, disp_hs_med, disp_hs_max = None, None, None
                 disp_rs_min, disp_rs_med, disp_rs_max = None, None, None
+            
+            # Override reference sell with port data
+            if 'total_shipper_price' in port_lane_data.columns and port_lane_data['total_shipper_price'].notna().any():
+                port_recent = port_lane_data[port_lane_data['days_ago'] <= RECENCY_WINDOW] if 'days_ago' in port_lane_data.columns else port_lane_data
+                if len(port_recent) > 0 and 'total_shipper_price' in port_recent.columns and port_recent['total_shipper_price'].notna().any():
+                    pricing['ref_sell_price'] = round(port_recent['total_shipper_price'].median(), 0)
+                    pricing['ref_sell_source'] = f'Port Recent {RECENCY_WINDOW}d'
+                elif port_lane_data['total_shipper_price'].notna().any():
+                    pricing['ref_sell_price'] = round(port_lane_data['total_shipper_price'].median(), 0)
+                    pricing['ref_sell_source'] = 'Port Historical'
         else:
             # No port data found - keep domestic display values but update counts
             # This allows showing domestic reference data when using port transform
@@ -3456,6 +3466,9 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             r_count = 0
             # Keep disp_h_*, disp_r_*, disp_hs_*, disp_rs_* as domestic values for reference
             # But mark them as domestic-derived by not changing them
+            # Override reference sell source to indicate it's domestic-derived
+            if pricing.get('ref_sell_source'):
+                pricing['ref_sell_source'] = f"Domestic {pricing['ref_sell_source']}"
     
     res = {
         'Truck_Type': truck_type,
@@ -3497,7 +3510,7 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
         pickup_region_override: If provided, use this region for pickup (from coordinates)
         dest_region_override: If provided, use this region for destination (from coordinates)
         weight: Weight in tons (optional, used for vehicle sizing logic)
-        truck_type: 'Domestic', 'Port Direct', or 'Port Indirect' (default: 'Domestic')
+        truck_type: 'Domestic', 'Port Direct', or 'Port Roundtrip' (default: 'Domestic')
     """
     if not vehicle_ar or vehicle_ar in ['', 'Auto', 'auto']: vehicle_ar = DEFAULT_VEHICLE_AR
     lane_data = df_knn[(df_knn['lane'] == f"{pickup_ar} → {dest_ar}") & (df_knn['vehicle_type'] == vehicle_ar)].copy()
@@ -4055,9 +4068,9 @@ with tab2:
                         st.session_state.bulk_truck_type = 'Port Direct'
                         st.rerun()
                 with seg_cols[3]:
-                    if st.button("📦 Port Indirect", use_container_width=True,
-                                 type="primary" if st.session_state.bulk_truck_type == 'Port Indirect' else "secondary"):
-                        st.session_state.bulk_truck_type = 'Port Indirect'
+                    if st.button("📦 Port Roundtrip", use_container_width=True,
+                                 type="primary" if st.session_state.bulk_truck_type == 'Port Roundtrip' else "secondary"):
+                        st.session_state.bulk_truck_type = 'Port Roundtrip'
                         st.rerun()
                 
                 selected_truck_type = st.session_state.bulk_truck_type

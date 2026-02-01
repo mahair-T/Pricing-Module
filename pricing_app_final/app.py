@@ -894,6 +894,14 @@ def update_city_normalization_pickle(new_entries):
             if canonical not in CANONICAL_TO_PROVINCE:
                 CANONICAL_TO_PROVINCE[canonical] = province
         
+        # Store coordinates for skipping Google Maps formula
+        latitude = entry.get('latitude')
+        longitude = entry.get('longitude')
+        if latitude and longitude and latitude != 0 and longitude != 0:
+            CITY_COORDINATES[canonical] = (latitude, longitude)
+            if variant != canonical:
+                CITY_COORDINATES[variant] = (latitude, longitude)
+        
         # Update English display names if variant is English
         if re.match(r'^[A-Za-z\s\-\(\)\.\']+$', variant):
             if canonical not in CITY_AR_TO_EN:

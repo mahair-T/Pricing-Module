@@ -2985,7 +2985,9 @@ all_canonicals = sorted(list(set(CITY_TO_CANONICAL.values())))
 pickup_cities_en = sorted(list(set([to_english_city(c) for c in all_canonicals])))
 dest_cities_en = pickup_cities_en
 vehicle_types_en = sorted(set(VEHICLE_TYPE_EN.values()))
-commodities = sorted(set([to_english_commodity(c) for c in df_knn['commodity'].unique()]))
+# Safe commodity extraction handling mixed types/NaNs
+unique_comms = [c for c in df_knn['commodity'].unique() if pd.notna(c)]
+commodities = sorted(set([to_english_commodity(str(c)) for c in unique_comms if str(c).strip() != '']))
 
 # ============================================
 # PRICING RULES & MODIFIERS

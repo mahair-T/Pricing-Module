@@ -4073,11 +4073,15 @@ with tab2:
                 selected_vehicles = []
                 for i, v_en in enumerate(vehicle_types_en):
                     with v_cols[i % 4]:
-                        if st.checkbox(v_en, value=(v_en == 'Flatbed Trailer'), key=f'vtype_{v_en}'):
+                        if st.checkbox(v_en, value=False, key=f'vtype_{v_en}'):
                             selected_vehicles.append(v_en)
                 
-                if not selected_vehicles:
-                    st.warning("⚠️ Please select at least one vehicle type.")
+                # Only warn if CSV has no vehicle column
+                has_vehicle_col = len(r_df.columns) > 2
+                if not selected_vehicles and not has_vehicle_col:
+                    st.warning("⚠️ Please select at least one vehicle type OR include a vehicle column in your CSV.")
+                elif not selected_vehicles:
+                    st.info("💡 No vehicles selected - will use vehicle from your CSV (Column 3).")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 

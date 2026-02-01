@@ -4852,6 +4852,26 @@ with tab2:
         if 'distance_edits' not in st.session_state:
             st.session_state.distance_edits = {}
         
+        # Process edits from PREVIOUS rerun BEFORE calculating dashboard metrics
+        # This ensures the dashboard updates immediately when editing distances
+        if 'distance_editor' in st.session_state and distance_results:
+            prev_edited_df = st.session_state.distance_editor
+            if hasattr(prev_edited_df, 'iterrows'):
+                for index, row in prev_edited_df.iterrows():
+                    try:
+                        p_ar, d_ar = row['Reference'].split('|')
+                        key = (p_ar, d_ar)
+                        original_info = distance_results.get(key)
+                        if original_info:
+                            original_val = original_info['distance']
+                            new_val = row['Distance (km)']
+                            if abs(new_val - original_val) > 0.001:
+                                st.session_state.distance_edits[key] = new_val
+                            elif key in st.session_state.distance_edits:
+                                del st.session_state.distance_edits[key]
+                    except:
+                        pass
+        
         missing_distances = {}
         existing_distances = {}
         for k, v in distance_results.items():
@@ -4899,30 +4919,7 @@ with tab2:
 
         st.markdown("---")
         
-        # Initialize distance edits state
-        if 'distance_edits' not in st.session_state:
-            st.session_state.distance_edits = {}
-        
-        # Process edits from PREVIOUS rerun BEFORE building editor_data
-        # This ensures status updates immediately, not on the next rerun
-        if 'distance_editor' in st.session_state and distance_results:
-            prev_edited_df = st.session_state.distance_editor
-            # Check if it's a DataFrame (may be dict/other type initially)
-            if hasattr(prev_edited_df, 'iterrows'):
-                for index, row in prev_edited_df.iterrows():
-                    try:
-                        p_ar, d_ar = row['Reference'].split('|')
-                        key = (p_ar, d_ar)
-                        original_info = distance_results.get(key)
-                        if original_info:
-                            original_val = original_info['distance']
-                            new_val = row['Distance (km)']
-                            if abs(new_val - original_val) > 0.001:
-                                st.session_state.distance_edits[key] = new_val
-                            elif key in st.session_state.distance_edits:
-                                del st.session_state.distance_edits[key]
-                    except:
-                        pass
+        # (Edit processing moved to before dashboard calculation - see above)
         
         if distance_results:
             # Prepare data for Data Editor

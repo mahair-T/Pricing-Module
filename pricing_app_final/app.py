@@ -2369,6 +2369,14 @@ class SpatialPredictor:
         self.city_outbound_cpk = m.get('city_outbound_cpk', {})
         self.city_inbound_cpk = m.get('city_inbound_cpk', {})
         
+        # Cascade V1: Region × Distance fallback
+        self.region_distance_cpk = m.get('region_distance_cpk', {})
+        self.city_to_region = m.get('city_to_region', {})
+        self.distance_quantiles = m.get('distance_quantiles', {})
+        
+        # Cascade V1: Distance Band fallback
+        self.distance_band_cpk = m.get('distance_band_cpk', {})
+        
         # Province fallback
         self.province_pair_cpk = m.get('province_pair_cpk', {})
         self.city_to_province = m.get('city_to_province', {})
@@ -2434,6 +2442,42 @@ class SpatialPredictor:
             predicted_cpk = (pickup_weighted + dest_weighted) / 2
             method = f'Spatial IDW (R{self.radius_km})'
             confidence = 'Low'
+        
+        # Cascade V1: Region × Distance fallback
+        if predicted_cpk is None and self.region_distance_cpk:
+            p_region = CANONICAL_TO_REGION.get(p_can) or self.city_to_region.get(p_can)
+            d_region = CANONICAL_TO_REGION.get(d_can) or self.city_to_region.get(d_can)
+            
+            # Get distance band
+            band = None
+            if distance_km and self.distance_quantiles:
+                q = self.distance_quantiles
+                if distance_km < q.get('q25', 0): band = 'q1'
+                elif distance_km < q.get('q50', 0): band = 'q2'
+                elif distance_km < q.get('q75', 0): band = 'q3'
+                else: band = 'q4'
+            
+            if p_region and d_region and band:
+                region_dist_cpk = self.region_distance_cpk.get((p_region, d_region, band))
+                if region_dist_cpk is not None:
+                    predicted_cpk = region_dist_cpk
+                    method = f'Region×Distance ({band})'
+                    confidence = 'Low'
+        
+        # Cascade V1: Distance Band fallback
+        if predicted_cpk is None and self.distance_band_cpk:
+            band = None
+            if distance_km and self.distance_quantiles:
+                q = self.distance_quantiles
+                if distance_km < q.get('q25', 0): band = 'q1'
+                elif distance_km < q.get('q50', 0): band = 'q2'
+                elif distance_km < q.get('q75', 0): band = 'q3'
+                else: band = 'q4'
+            
+            if band and band in self.distance_band_cpk:
+                predicted_cpk = self.distance_band_cpk[band]
+                method = f'Distance Band ({band})'
+                confidence = 'Low'
         
         # Province P50 fallback
         if predicted_cpk is None:
@@ -2733,7 +2777,7 @@ def get_port_lane_data(pickup_ar, dest_ar, load_type):
             effective_lane_ar = f"{pickup_ar} → {dest_ar}"
             port_lane_data = port_type_data[port_type_data['effective_lane'] == effective_lane_ar].copy()
         
-        # Strategy 2b: Match by pickup_city and effective_dest
+        # Strategy 2b: Match by pickup_city and effective_dest (exact match)
         if len(port_lane_data) == 0 and 'effective_dest' in port_type_data.columns:
             port_lane_data = port_type_data[
                 (port_type_data['pickup_city'] == pickup_ar) &
@@ -2749,11 +2793,62 @@ def get_port_lane_data(pickup_ar, dest_ar, load_type):
                         (port_type_data['effective_dest'] == dest_en)
                     ].copy()
         
-        # Strategy 2c: Partial match on effective_dest (handles slight naming variations)
+        # Strategy 2c: Normalized lookup on effective_dest (handles naming variations without fuzzy matching)
+        # Normalize both the destination and effective_dest values for comparison
         if len(port_lane_data) == 0 and 'effective_dest' in port_type_data.columns:
+            # Get the canonical for the destination city
+            dest_canonical = CITY_TO_CANONICAL.get(dest_ar, dest_ar)
+            dest_en = to_english_city(dest_ar)
+            
+            # Normalize destination for comparison
+            dest_lower = normalize_english_text(dest_ar) if dest_ar else None
+            dest_en_lower = normalize_english_text(dest_en) if dest_en else None
+            dest_aggressive = normalize_aggressive(dest_ar)
+            dest_en_aggressive = normalize_aggressive(dest_en) if dest_en else None
+            dest_canonical_aggressive = normalize_aggressive(dest_canonical) if dest_canonical else None
+            
+            # Create normalized column for effective_dest and match
+            def matches_destination(effective_dest_val):
+                """Check if effective_dest matches the destination using normalized lookups."""
+                if pd.isna(effective_dest_val):
+                    return False
+                ed_str = str(effective_dest_val).strip()
+                
+                # Exact match with canonical
+                if ed_str == dest_canonical:
+                    return True
+                
+                # Lookup effective_dest's canonical and compare
+                ed_canonical = CITY_TO_CANONICAL.get(ed_str)
+                if ed_canonical and ed_canonical == dest_canonical:
+                    return True
+                
+                # Try lowercase normalized lookup
+                ed_lower = normalize_english_text(ed_str)
+                if ed_lower:
+                    ed_canonical_from_lower = CITY_TO_CANONICAL_LOWER.get(ed_lower)
+                    if ed_canonical_from_lower and ed_canonical_from_lower == dest_canonical:
+                        return True
+                    # Direct lowercase comparison
+                    if ed_lower == dest_lower or ed_lower == dest_en_lower:
+                        return True
+                
+                # Try aggressive normalized lookup (strips all punctuation)
+                ed_aggressive = normalize_aggressive(ed_str)
+                if ed_aggressive:
+                    ed_canonical_from_agg = CITY_TO_CANONICAL_AGGRESSIVE.get(ed_aggressive)
+                    if ed_canonical_from_agg and ed_canonical_from_agg == dest_canonical:
+                        return True
+                    # Direct aggressive comparison
+                    if ed_aggressive == dest_aggressive or ed_aggressive == dest_en_aggressive or ed_aggressive == dest_canonical_aggressive:
+                        return True
+                
+                return False
+            
+            # Apply matching function
+            matching_mask = port_type_data['effective_dest'].apply(matches_destination)
             port_lane_data = port_type_data[
-                (port_type_data['pickup_city'] == pickup_ar) &
-                (port_type_data['effective_dest'].astype(str).str.contains(dest_ar, case=False, na=False))
+                (port_type_data['pickup_city'] == pickup_ar) & matching_mask
             ].copy()
     
     # Fallback: Try matching with any available lane/effective_lane columns regardless of load type
@@ -2837,6 +2932,51 @@ def get_cities_without_regions():
     return sorted(cities_without_region)
 
 CITIES_WITHOUT_REGIONS = get_cities_without_regions()
+
+# ============================================
+# STARTUP VALIDATION: Check for unmapped port cities
+# Cities in port_reference_data.csv effective_dest that don't have canonical mappings
+# ============================================
+def get_unmapped_port_cities():
+    """
+    Find cities in port reference data (effective_dest column) that have no canonical mapping.
+    Uses normalized lookup (lowercase, aggressive normalization) but NOT fuzzy matching.
+    
+    Returns:
+        List of unmapped city names from port reference data
+    """
+    if len(df_port) == 0 or 'effective_dest' not in df_port.columns:
+        return []
+    
+    # Get unique effective_dest values from port data
+    port_cities = set(df_port['effective_dest'].dropna().unique())
+    
+    unmapped = []
+    for city in port_cities:
+        city_str = str(city).strip()
+        if not city_str or city_str.lower() in ('nan', 'none', ''):
+            continue
+        
+        # Try exact match first
+        if city_str in CITY_TO_CANONICAL:
+            continue
+        
+        # Try lowercase normalized match (for English names)
+        city_lower = normalize_english_text(city_str)
+        if city_lower and city_lower in CITY_TO_CANONICAL_LOWER:
+            continue
+        
+        # Try aggressive normalized match (strips all punctuation/spaces)
+        city_aggressive = normalize_aggressive(city_str)
+        if city_aggressive and city_aggressive in CITY_TO_CANONICAL_AGGRESSIVE:
+            continue
+        
+        # No match found - this is an unmapped city
+        unmapped.append(city_str)
+    
+    return sorted(set(unmapped))
+
+PORT_CITIES_UNMAPPED = get_unmapped_port_cities()
 
 # ============================================
 # DROPDOWN SETUP
@@ -3453,6 +3593,17 @@ if CITIES_WITHOUT_REGIONS:
         for city in CITIES_WITHOUT_REGIONS:
             st.code(city)
         st.info("Add these to city_normalization.csv with columns: variant, canonical, english, region")
+
+# Warning for cities in port reference data but not in normalization CSV
+if PORT_CITIES_UNMAPPED:
+    with st.expander(f"🚢 {len(PORT_CITIES_UNMAPPED)} port cities in effective_dest missing from canonicals CSV", expanded=False):
+        st.warning("""
+        **Action Required:** These cities appear in the port_reference_data.csv `effective_dest` column but have NO mapping in city_normalization.csv.
+        Port pricing lookups may fail for lanes involving these cities.
+        """)
+        for city in PORT_CITIES_UNMAPPED:
+            st.code(city)
+        st.info("Add these as variants to city_normalization.csv with columns: variant, canonical, english, region")
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Single Route Pricing", "📦 Bulk Route Lookup", "🗺️ Map Explorer", "🔧 Admin"])
 

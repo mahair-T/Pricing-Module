@@ -4906,8 +4906,21 @@ with tab2:
                     "is_missing_sort": 0 if is_missing else 1 # Hidden sort key
                 })
             
-            # Sort: Missing first
-            editor_df = pd.DataFrame(editor_data).sort_values('is_missing_sort')
+            # Sort: Missing first, then by source priority (Google Maps, Fuzzy, others), then by distance
+            editor_df = pd.DataFrame(editor_data)
+            
+            # Create source priority: Missing=0, Google Maps=1, Fuzzy/Historical=2, Others=3
+            def source_priority(src):
+                if 'Missing' in str(src): return 0
+                if 'Google' in str(src): return 1
+                if 'Fuzzy' in str(src) or 'Historical' in str(src): return 2
+                return 3
+            
+            editor_df['source_priority'] = editor_df['Source'].apply(source_priority)
+            editor_df = editor_df.sort_values(
+                by=['is_missing_sort', 'source_priority', 'Distance (km)'],
+                ascending=[True, True, True]
+            ).drop(columns=['source_priority'])
             
             st.markdown("##### 📝 Review & Edit Distances")
             

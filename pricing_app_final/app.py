@@ -3981,6 +3981,10 @@ with tab2:
         for key in list(st.session_state.keys()):
             if key.startswith('bulk_') and key not in ['bulk_wizard_step', 'bulk_wizard_data']:
                 del st.session_state[key]
+        
+        # Explicitly clear city resolutions
+        if 'city_resolutions' in st.session_state:
+            del st.session_state['city_resolutions']
     
     # Show current step indicator
     # UPDATED: Renamed steps and centered layout

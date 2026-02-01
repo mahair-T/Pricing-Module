@@ -4859,8 +4859,8 @@ with tab2:
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Reference": st.column_config.TextColumn(hidden=True),
-                    "is_missing_sort": st.column_config.NumberColumn(hidden=True),
+                    "Reference": None,
+                    "is_missing_sort": None,
                     "Status": st.column_config.TextColumn(width="small", disabled=True),
                     "Pickup": st.column_config.TextColumn(width="medium", disabled=True),
                     "Destination": st.column_config.TextColumn(width="medium", disabled=True),

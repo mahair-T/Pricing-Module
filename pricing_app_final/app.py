@@ -4470,7 +4470,9 @@ with tab2:
                                 st.error("Cannot determine province. Coordinates might be outside covered regions.")
                             else:
                                 # Log to Google Sheets
-                                username = st.session_state.get('username', 'unknown')
+                                # Fix: Get username from 'bulk_username' (set in Step 0)
+                                username = st.session_state.get('bulk_username', st.session_state.get('username', 'unknown'))
+                                
                                 log_city_match(
                                     original_input=city_name,
                                     matched_canonical=city_name,

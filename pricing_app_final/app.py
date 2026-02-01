@@ -3506,7 +3506,7 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
                 pricing['ref_sell_source'] = f"Domestic {pricing['ref_sell_source']}"
     
     res = {
-        'Truck_Type': truck_type,
+        'Freight_Segment': truck_type,
         'Vehicle_Type': to_english_vehicle(vehicle_ar), 'Commodity': to_english_commodity(commodity),
         'Weight_Tons': round(weight, 1), 'Distance_km': round(dist, 0), 'Distance_Source': dist_src,
         'Hist_Count': h_count, 'Hist_Min': disp_h_min, 'Hist_Median': disp_h_med, 'Hist_Max': disp_h_max,
@@ -3606,7 +3606,7 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
     return {
         'From': to_english_city(pickup_ar), 
         'To': to_english_city(dest_ar), 
-        'Truck_Type': truck_type,
+        'Freight_Segment': truck_type,
         'Vehicle': to_english_vehicle(vehicle_ar), 
         'Weight_Tons': weight if weight else 25.0,
         'Distance': int(dist) if dist else 0,
@@ -3718,7 +3718,7 @@ with tab1:
         if result['Distance_km'] == 0 or result['Distance_Source'] == 'Default': st.error(f"⚠️ Distance data missing or estimated ({result['Distance_km']} km)")
         
         st.header("💰 Pricing Results")
-        truck_type_display = result.get('Truck_Type', 'Domestic')
+        truck_type_display = result.get('Freight_Segment', 'Domestic')
         truck_icon = "🏠" if truck_type_display == 'Domestic' else "🚢"
         st.info(f"**{pickup_en} → {dest_en}** | {truck_icon} {truck_type_display} | 🚛 {result['Vehicle_Type']} | 📏 {result['Distance_km']:.0f} km | ⚖️ {result['Weight_Tons']:.1f} T")
         
@@ -3764,7 +3764,7 @@ with tab1:
         st.markdown("---")
         with st.expander("🔮 Model Predictions Comparison", expanded=False):
             model_df = []
-            truck_type_for_comparison = result.get('Truck_Type', 'Domestic')
+            truck_type_for_comparison = result.get('Freight_Segment', 'Domestic')
             
             if 'IndexShrink_Price' in result and result['IndexShrink_Price']:
                 idx_price = result['IndexShrink_Price']
@@ -3808,7 +3808,7 @@ with tab1:
             st.markdown("---")
             st.subheader("🚚 Your Ammunition (Recent Matches)")
             
-            truck_type_result = result.get('Truck_Type', 'Domestic')
+            truck_type_result = result.get('Freight_Segment', 'Domestic')
             
             if truck_type_result != 'Domestic' and len(df_port) > 0:
                 # ═══════════════════════════════════════════════════════════════════

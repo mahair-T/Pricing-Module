@@ -4744,6 +4744,10 @@ with tab2:
             # Get unique city pairs (only for active rows)
             city_pairs = {}
             for row in active_rows:
+                # Skip same-city routes (pickup == destination)
+                if row['pickup_ar'] == row['dest_ar']:
+                    continue
+                    
                 pair_key = (row['pickup_ar'], row['dest_ar'])
                 if pair_key not in city_pairs:
                     # Check if distance exists
@@ -4901,9 +4905,12 @@ with tab2:
                 # Use current edit if exists, else original
                 current_val = st.session_state.distance_edits.get(pair_key, info['distance'])
                 
+                # Status should reflect CURRENT distance (including user edits)
+                is_currently_missing = current_val == 0
+                
                 editor_data.append({
                     "Reference": ref_key,
-                    "Status": "⚠️ Missing" if is_missing else "✅ Ready",
+                    "Status": "⚠️ Missing" if is_currently_missing else "✅ Ready",
                     "Pickup": info['pickup_en'],
                     "Destination": info['dest_en'],
                     "Distance (km)": float(current_val),

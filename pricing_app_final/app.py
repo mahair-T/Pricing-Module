@@ -3206,10 +3206,13 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False, check_
         should_log = True
         
         # Skip Google Maps for cities with manual coordinates
-        has_manual_pickup = pickup_ar in CITY_COORDINATES or p_can in CITY_COORDINATES
-        has_manual_dest = dest_ar in CITY_COORDINATES or d_can in CITY_COORDINATES
-        if has_manual_pickup or has_manual_dest:
-            should_log = False  # User must input distance manually in Step 2
+        try:
+            has_manual_pickup = pickup_ar in CITY_COORDINATES or p_can in CITY_COORDINATES
+            has_manual_dest = dest_ar in CITY_COORDINATES or d_can in CITY_COORDINATES
+            if has_manual_pickup or has_manual_dest:
+                should_log = False  # User must input distance manually in Step 2
+        except NameError:
+            pass  # CITY_COORDINATES not yet initialized during startup
         
         # If check_history is True, only log if at least one city has historical data
         # (Used by Master Grid to avoid logging routes where neither city has any history)

@@ -4827,82 +4827,81 @@ with tab2:
         if 'distance_edits' not in st.session_state:
             st.session_state.distance_edits = {}
         
-        # Show missing distances first (needing attention)
-        if missing_distances:
-            st.markdown("#### ⚠️ Routes Needing Input")
+        if distance_results:
+            # Prepare data for Data Editor
+            editor_data = []
+            for pair_key, info in distance_results.items():
+                is_missing = info['distance'] == 0 or info['source'] == 'Missing'
+                pickup_ar, dest_ar = pair_key
+                ref_key = f"{pickup_ar}|{dest_ar}"
+                
+                # Use current edit if exists, else original
+                current_val = st.session_state.distance_edits.get(pair_key, info['distance'])
+                
+                editor_data.append({
+                    "Reference": ref_key,
+                    "Status": "⚠️ Missing" if is_missing else "✅ Ready",
+                    "Pickup": info['pickup_en'],
+                    "Destination": info['dest_en'],
+                    "Distance (km)": float(current_val),
+                    "Source": info['source'] if not st.session_state.distance_edits.get(pair_key) else "User Override",
+                    "Routes": len(info['rows']),
+                    "is_missing_sort": 0 if is_missing else 1 # Hidden sort key
+                })
             
-            for pair_key, info in missing_distances.items():
-                with st.expander(f"📏 {info['pickup_en']} → {info['dest_en']} ({len(info['rows'])} routes)", expanded=True):
-                    col1, col2, col3 = st.columns([2, 2, 1])
+            # Sort: Missing first
+            editor_df = pd.DataFrame(editor_data).sort_values('is_missing_sort')
+            
+            st.markdown("##### 📝 Review & Edit Distances")
+            
+            edited_df = st.data_editor(
+                editor_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Reference": st.column_config.TextColumn(hidden=True),
+                    "is_missing_sort": st.column_config.NumberColumn(hidden=True),
+                    "Status": st.column_config.TextColumn(width="small", disabled=True),
+                    "Pickup": st.column_config.TextColumn(width="medium", disabled=True),
+                    "Destination": st.column_config.TextColumn(width="medium", disabled=True),
+                    "Distance (km)": st.column_config.NumberColumn(
+                        min_value=0, max_value=5000, step=10, required=True, format="%.1f km"
+                    ),
+                    "Source": st.column_config.TextColumn(width="medium", disabled=True),
+                    "Routes": st.column_config.NumberColumn(width="small", disabled=True)
+                },
+                key="distance_editor"
+            )
+            
+            # Process edits
+            for index, row in edited_df.iterrows():
+                try:
+                    p_ar, d_ar = row['Reference'].split('|')
+                    key = (p_ar, d_ar)
                     
-                    with col1:
-                        st.caption(f"Rows: {', '.join(map(str, info['rows'][:5]))}{'...' if len(info['rows']) > 5 else ''}")
-                        if info['user_override']:
-                            st.info(f"User provided: {info['user_override']} km")
-                    
-                    with col2:
-                        # Distance input
-                        dist_key = f"dist_{pair_key[0]}_{pair_key[1]}"
-                        default_val = info['user_override'] if info['user_override'] else 0.0
-                        new_dist = st.number_input(
-                            "Distance (km)",
-                            min_value=0.0,
-                            max_value=5000.0,
-                            value=float(default_val),
-                            step=10.0,
-                            key=dist_key
-                        )
+                    # Check if distance changed from ORIGINAL
+                    original_info = distance_results.get(key)
+                    if original_info:
+                        original_val = original_info['distance']
+                        new_val = row['Distance (km)']
                         
-                        if new_dist > 0:
-                            st.session_state.distance_edits[pair_key] = new_dist
-                    
-                    with col3:
-                        if new_dist > 0:
-                            st.success("✅")
-                        else:
-                            st.warning("⚠️")
+                        # If different from original, store as edit
+                        if abs(new_val - original_val) > 0.001:
+                            st.session_state.distance_edits[key] = new_val
+                        elif key in st.session_state.distance_edits:
+                            # Reverted to original
+                            del st.session_state.distance_edits[key]
+                except:
+                    pass
         
-        # Show existing distances (for review/edit)
-        if existing_distances:
-            with st.expander(f"✅ View {len(existing_distances)} Resolved Distances", expanded=False):
-                # Create a dataframe for display
-                dist_df = pd.DataFrame([
-                    {
-                        'From': info['pickup_en'],
-                        'To': info['dest_en'],
-                        'Distance (km)': info['distance'],
-                        'Source': info['source'],
-                        'Routes': len(info['rows'])
-                    }
-                    for info in existing_distances.values()
-                ])
+        # Recalculate missing based on edits
+        missing_count = 0
+        for pair_key, info in distance_results.items():
+            current_dist = st.session_state.distance_edits.get(pair_key, info['distance'])
+            if current_dist == 0 and not info['user_override']:
+                missing_count += 1
                 
-                st.dataframe(dist_df, use_container_width=True, hide_index=True)
-                
-                st.markdown("##### Edit Existing")
-                for pair_key, info in existing_distances.items():
-                    col1, col2 = st.columns([3, 2])
-                    with col1:
-                        st.text(f"{info['pickup_en']} → {info['dest_en']}")
-                    with col2:
-                        dist_key = f"dist_edit_{pair_key[0]}_{pair_key[1]}"
-                        new_dist = st.number_input(
-                            "Distance (km)",
-                            min_value=0.0,
-                            max_value=5000.0,
-                            value=float(info['distance']),
-                            step=10.0,
-                            key=dist_key,
-                            label_visibility="collapsed"
-                        )
-                        if new_dist != info['distance']:
-                            st.session_state.distance_edits[pair_key] = new_dist
-        
-        # Check if all missing distances are resolved
-        all_resolved = all(
-            pair_key in st.session_state.distance_edits or info['user_override']
-            for pair_key, info in missing_distances.items()
-        )
+        all_resolved = missing_count == 0
         
         # Navigation
         st.markdown("---")

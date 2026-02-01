@@ -4457,36 +4457,43 @@ with tab2:
                         if new_lat != 0 and new_lon != 0:
                             det_prov, det_reg = get_province_from_coordinates(new_lat, new_lon)
                         
-                        # Set defaults if detected
-                        def_prov_idx = 0
+                        # Display Detected Province (Read-Only)
+                        if det_prov:
+                            st.success(f"📍 Location: {det_prov}")
+                        elif new_lat != 0 or new_lon != 0:
+                            st.warning("⚠️ No province detected. Please check coordinates.")
                         
-                        # Add Placeholder
-                        PROVINCES_LIST = ["Select Province..."] + sorted(list(PROVINCE_TO_REGION.keys()))
-                        
-                        if det_prov and det_prov in PROVINCES_LIST:
-                            def_prov_idx = PROVINCES_LIST.index(det_prov)
-                            st.caption(f"📍 Detected: {det_prov}")
-                        
-                        # Override Dropdowns
-                        sel_prov = st.selectbox("Province", options=PROVINCES_LIST, index=def_prov_idx, key=f"prov_{city_name}")
-                        
-                        # Infer Region (Hidden from user)
-                        inferred_reg = PROVINCE_TO_REGION.get(sel_prov, "Central") if sel_prov != "Select Province..." else None
-
                         if st.button("Save New City", key=f"save_{city_name}", use_container_width=True):
                             if new_lat == 0 or new_lon == 0:
                                 st.error("Enter valid coordinates")
-                            elif sel_prov == "Select Province...":
-                                st.error("Please select a valid Province")
+                            elif not det_prov:
+                                st.error("Cannot determine province. Coordinates might be outside covered regions.")
                             else:
+                                # Log to Google Sheets
+                                username = st.session_state.get('username', 'unknown')
+                                log_city_match(
+                                    original_input=city_name,
+                                    matched_canonical=city_name,
+                                    match_type='New City',
+                                    confidence='N/A',
+                                    latitude=new_lat,
+                                    longitude=new_lon,
+                                    province=det_prov,
+                                    region=det_reg,
+                                    user=username,
+                                    source='bulk_upload',
+                                    immediate=False  # Queue for batch flush
+                                )
+                                
                                 st.session_state.city_resolutions[city_name] = {
                                     'type': 'new_city',
                                     'canonical': city_name,
                                     'latitude': new_lat,
                                     'longitude': new_lon,
-                                    'province': sel_prov,
-                                    'region': inferred_reg
+                                    'province': det_prov,
+                                    'region': det_reg
                                 }
+                                st.toast(f"✅ Saved: {city_name} → {det_prov}")
                                 st.rerun()
         
         # 5. NAVIGATION WITH ADMIN ACTIONS

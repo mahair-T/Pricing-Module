@@ -3201,12 +3201,19 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False, check_
     }, immediate=immediate_log)
     
     # Also log to MatchedDistances sheet for Google Maps lookup
+    # SKIP if either city has user-provided coordinates (Google Maps won't find it)
     if pickup_en and dest_en:
         should_log = True
         
+        # Skip Google Maps for cities with manual coordinates
+        has_manual_pickup = pickup_ar in CITY_COORDINATES or p_can in CITY_COORDINATES
+        has_manual_dest = dest_ar in CITY_COORDINATES or d_can in CITY_COORDINATES
+        if has_manual_pickup or has_manual_dest:
+            should_log = False  # User must input distance manually in Step 2
+        
         # If check_history is True, only log if at least one city has historical data
         # (Used by Master Grid to avoid logging routes where neither city has any history)
-        if check_history:
+        if check_history and should_log:
             pickup_has_history = pickup_ar in VALID_CITIES_AR or p_can in VALID_CITIES_AR
             dest_has_history = dest_ar in VALID_CITIES_AR or d_can in VALID_CITIES_AR
             should_log = pickup_has_history or dest_has_history
@@ -4469,24 +4476,7 @@ with tab2:
                             elif not det_prov:
                                 st.error("Cannot determine province. Coordinates might be outside covered regions.")
                             else:
-                                # Log to Google Sheets
-                                # Fix: Get username from 'bulk_username' (set in Step 0)
-                                username = st.session_state.get('bulk_username', st.session_state.get('username', 'unknown'))
-                                
-                                log_city_match(
-                                    original_input=city_name,
-                                    matched_canonical=city_name,
-                                    match_type='New City',
-                                    confidence='N/A',
-                                    latitude=new_lat,
-                                    longitude=new_lon,
-                                    province=det_prov,
-                                    region=det_reg,
-                                    user=username,
-                                    source='bulk_upload',
-                                    immediate=False  # Queue for batch flush
-                                )
-                                
+                                # Store resolution (logging happens in Continue button)
                                 st.session_state.city_resolutions[city_name] = {
                                     'type': 'new_city',
                                     'canonical': city_name,
@@ -4622,8 +4612,15 @@ with tab2:
                             log_to_append_sheet(city_name, resolution['canonical'], get_city_region(resolution['canonical']), province=get_city_province(resolution['canonical']), source='fuzzy', user=username, immediate=False)
                             
                         elif resolution['type'] in ['new_city', 'google_match']:
-                            src = 'google' if resolution['type'] == 'google_match' else 'new_city'
-                            log_city_match(city_name, resolution['canonical'], 'New/Google', None, latitude=resolution['latitude'], longitude=resolution['longitude'], province=resolution['province'], region=resolution['region'], user=username, source=src, immediate=False)
+                            # Use correct match type for each
+                            if resolution['type'] == 'google_match':
+                                match_type = 'Google Match'
+                                src = 'google'
+                            else:
+                                match_type = 'New City'
+                                src = 'new_city'
+                            
+                            log_city_match(city_name, resolution['canonical'], match_type, None, latitude=resolution['latitude'], longitude=resolution['longitude'], province=resolution['province'], region=resolution['region'], user=username, source=src, immediate=False)
                             
                             new_entries.append({
                                 'variant': city_name, 'canonical': resolution['canonical'],

@@ -71,6 +71,9 @@ PROVINCE_TO_REGION = {
     'Northern Borders Province': 'Northern'
 }
 
+# City coordinates for user-added cities (to skip Google Maps formula)
+CITY_COORDINATES = {}
+
 # ============================================
 # GEOJSON LOADING FOR PROVINCE DETECTION
 # ============================================

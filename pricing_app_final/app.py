@@ -4097,6 +4097,10 @@ with tab2:
                             st.error("Please select at least one vehicle type.")
                         else:
                             # --- PROCESSING LOGIC STARTS HERE ---
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            status_text.text("Step 1/4: Parsing uploaded file...")
                             unmatched_cities = {} 
                             parsed_rows = []
                             
@@ -4151,6 +4155,9 @@ with tab2:
                                     'dist_override': dist_override, 'vehicle_raw': v_raw
                                 })
                             
+                            progress_bar.progress(30)
+                            status_text.text("Step 2/4: Validating matched cities...")
+                            
                             # Log missing distances for matched cities immediately
                             matched_pairs_checked = set()
                             for row in parsed_rows:
@@ -4159,6 +4166,9 @@ with tab2:
                                     if pair_key not in matched_pairs_checked:
                                         matched_pairs_checked.add(pair_key)
                                         get_distance(row['pickup_ar'], row['dest_ar'], immediate_log=False)
+                            
+                            progress_bar.progress(50)
+                            status_text.text("Step 3/4: Saving logs to Google Sheets (this may take a few seconds)...")
                             
                             # Flush logs
                             dist_flushed_ok, dist_flushed_count = flush_matched_distances_to_sheet()
@@ -4180,6 +4190,8 @@ with tab2:
                             # Move to next step
                             if unmatched_cities:
                                 # Run fuzzy matching
+                                progress_bar.progress(70)
+                                status_text.text("Step 4/4: Analyzing unmatched cities...")
                                 fuzzy_results = {}
                                 if RAPIDFUZZ_AVAILABLE:
                                     fuzzy_results = batch_fuzzy_match_cities(list(unmatched_cities.keys()), threshold=80)
@@ -4208,6 +4220,8 @@ with tab2:
                                 # Order results
                                 google_suggestions = st.session_state.bulk_wizard_data.get('google_suggestions', {})
                                 google_matched = {k: v for k, v in unmatched_cities.items() if google_suggestions.get(k, {}).get('success')}
+                                progress_bar.progress(100)
+                                status_text.empty()
                                 fuzzy_matched = {k: v for k, v in unmatched_cities.items() if fuzzy_results.get(k, {}).get('match_found') and k not in google_matched}
                                 no_match = {k: v for k, v in unmatched_cities.items() if k not in google_matched and k not in fuzzy_matched}
                                 
@@ -4545,6 +4559,9 @@ with tab2:
                     # =========================================
                     # APPLY RESOLUTIONS LOGIC
                     # =========================================
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    status_text.text("Applying your resolutions...")
                     resolutions = st.session_state.city_resolutions
                     new_entries = []
                     ignored_rows = set()
@@ -4590,12 +4607,16 @@ with tab2:
                             log_to_append_sheet(city_name, resolution['canonical'], resolution['region'], province=resolution['province'], latitude=resolution['latitude'], longitude=resolution['longitude'], source=src, user=username, immediate=False)
 
                     # Update & Flush
+                    progress_bar.progress(60)
+                    status_text.text("Updating database and logs...")
                     update_city_normalization_pickle(new_entries)
                     flush_matched_cities_to_sheet()
                     flush_append_sheet()
                     flush_error_log_to_sheet()
                     
                     # Update Parsed Rows
+                    progress_bar.progress(80)
+                    status_text.text("Finalizing trip data...")
                     parsed_rows = wizard_data['parsed_rows']
                     for row in parsed_rows:
                         row['ignored'] = row['row_num'] in ignored_rows
@@ -4610,6 +4631,9 @@ with tab2:
                                 if res and res['type'] != 'ignored':
                                     row['dest_ar'] = res['canonical']
                                     row['dest_ok'] = True
+                    
+                    progress_bar.progress(100)
+                    status_text.empty()
                     
                     st.session_state.bulk_wizard_data['parsed_rows'] = parsed_rows
                     st.session_state.bulk_wizard_data['ignored_rows'] = ignored_rows

@@ -72,7 +72,12 @@ PROVINCE_TO_REGION = {
 }
 
 # City coordinates for user-added cities (to skip Google Maps formula)
-CITY_COORDINATES = {}
+# Using a function to access session_state (initialized on first access)
+def get_city_coordinates():
+    """Get CITY_COORDINATES from session state (persists across reruns)."""
+    if 'CITY_COORDINATES' not in st.session_state:
+        st.session_state.CITY_COORDINATES = {}
+    return st.session_state.CITY_COORDINATES
 
 # ============================================
 # GEOJSON LOADING FOR PROVINCE DETECTION
@@ -859,7 +864,7 @@ def update_city_normalization_pickle(new_entries):
     """
     global CITY_TO_CANONICAL, CITY_TO_CANONICAL_LOWER, CITY_TO_CANONICAL_AGGRESSIVE
     global CITY_TO_REGION, CANONICAL_TO_REGION, CITY_AR_TO_EN, CITY_EN_TO_AR
-    global CITY_TO_PROVINCE, CANONICAL_TO_PROVINCE, FUZZY_VARIANTS_LIST, CITY_COORDINATES
+    global CITY_TO_PROVINCE, CANONICAL_TO_PROVINCE, FUZZY_VARIANTS_LIST
     
     added_count = 0
     
@@ -901,9 +906,10 @@ def update_city_normalization_pickle(new_entries):
         latitude = entry.get('latitude')
         longitude = entry.get('longitude')
         if latitude and longitude and latitude != 0 and longitude != 0:
-            CITY_COORDINATES[canonical] = (latitude, longitude)
+            city_coords = get_city_coordinates()
+            city_coords[canonical] = (latitude, longitude)
             if variant != canonical:
-                CITY_COORDINATES[variant] = (latitude, longitude)
+                city_coords[variant] = (latitude, longitude)
         
         # Update English display names if variant is English
         if re.match(r'^[A-Za-z\s\-\(\)\.\']+$', variant):
@@ -3218,8 +3224,9 @@ def get_distance(pickup_ar, dest_ar, lane_data=None, immediate_log=False, check_
         
         # Skip Google Maps for cities with manual coordinates
         try:
-            has_manual_pickup = pickup_ar in CITY_COORDINATES or p_can in CITY_COORDINATES
-            has_manual_dest = dest_ar in CITY_COORDINATES or d_can in CITY_COORDINATES
+            city_coords = get_city_coordinates()
+            has_manual_pickup = pickup_ar in city_coords or p_can in city_coords
+            has_manual_dest = dest_ar in city_coords or d_can in city_coords
             if has_manual_pickup or has_manual_dest:
                 should_log = False  # User must input distance manually in Step 2
         except NameError:

@@ -1293,6 +1293,28 @@ def get_bulk_sheet():
         st.error(f"Google Sheets connection error: {str(e)}")
         return None
 
+def get_bulk_sheet_by_tab(tab_name):
+    """
+    Get or create a specific tab in the bulk pricing spreadsheet.
+    Used by Master Grid to write Domestic / Port Roundtrip / Port Direct to separate tabs.
+    """
+    try:
+        client = get_gsheet_client()
+        if client is None:
+            return None
+        
+        spreadsheet = client.open_by_url(BULK_PRICING_SHEET_URL)
+        
+        try:
+            worksheet = spreadsheet.worksheet(tab_name)
+        except:
+            worksheet = spreadsheet.add_worksheet(title=tab_name, rows=10000, cols=20)
+            
+        return worksheet
+    except Exception as e:
+        st.error(f"Google Sheets connection error for tab '{tab_name}': {str(e)}")
+        return None
+
 def ensure_sheet_rows(worksheet, required_rows):
     """
     Ensure the worksheet has enough rows. Expands if needed.
@@ -3321,18 +3343,29 @@ def calculate_prices(pickup_ar, dest_ar, requested_vehicle_ar, distance_km, lane
     # Rounding
     buy_rounded = round_to_nearest(final_buy_price, 100)
     
-    # Calculate sell price (Margin logic)
+    # Calculate sell price: Recent shipper median → fallback to Buy + Margin
     bh_prob, margin, bh_ratio = get_backhaul_probability(dest_ar)
-    sell_rounded = round_to_nearest(buy_rounded * (1 + margin), 50) if buy_rounded else None
     
-    # Get reference sell (Visual only - using original requested vehicle data if available)
-    # We pass the ORIGINAL lane_data (if provided) to show history for the actual requested truck
+    # Check for recent shipper prices from the requested vehicle's lane data
     req_lane_data = lane_data if lane_data is not None else df_knn[(df_knn['lane'] == lane) & (df_knn['vehicle_type'] == requested_vehicle_ar)].copy()
+    recent_shipper = req_lane_data[req_lane_data['days_ago'] <= RECENCY_WINDOW] if len(req_lane_data) > 0 else pd.DataFrame()
+    
+    if len(recent_shipper) > 0 and 'total_shipper_price' in recent_shipper.columns and recent_shipper['total_shipper_price'].notna().any():
+        # Use median of recent shipper prices as sell price
+        sell_rounded = round_to_nearest(recent_shipper['total_shipper_price'].median(), 50)
+        sell_source = 'Recent Shipper'
+    else:
+        # Fallback: Buy + Margin
+        sell_rounded = round_to_nearest(buy_rounded * (1 + margin), 50) if buy_rounded else None
+        sell_source = 'Buy + Margin'
+    
+    # Get reference sell (Visual only)
     ref_sell, ref_src = calculate_reference_sell(pickup_ar, dest_ar, requested_vehicle_ar, req_lane_data, sell_rounded)
     
     return {
         'buy_price': buy_rounded, 
-        'sell_price': sell_rounded, 
+        'sell_price': sell_rounded,
+        'sell_source': sell_source,
         'base_flatbed_price': base_price,  # Helpful for debug
         'ref_sell_price': round_to_nearest(ref_sell, 50),
         'ref_sell_source': ref_src, 
@@ -3449,10 +3482,14 @@ def price_single_route(pickup_ar, dest_ar, vehicle_ar=None, commodity=None, weig
             buy_price = round_to_nearest(buy_price, 100)
             model_used = f"Domestic {model_used} + Port Transform"
         
-        # Apply margin after price determination
+        # Sell price: Recent port shipper median → fallback to Buy + Margin
         if buy_price:
             _, margin, _ = get_backhaul_probability(dest_ar)
-            sell_price = round_to_nearest(buy_price * (1 + margin), 50)
+            # Check for recent port shipper prices first
+            if len(port_rec_data) > 0 and 'total_shipper_price' in port_rec_data.columns and port_rec_data['total_shipper_price'].notna().any():
+                sell_price = round_to_nearest(port_rec_data['total_shipper_price'].median(), 50)
+            else:
+                sell_price = round_to_nearest(buy_price * (1 + margin), 50)
         
         # Update display stats with actual port data
         if len(port_lane_data) > 0:
@@ -3598,10 +3635,13 @@ def lookup_route_stats(pickup_ar, dest_ar, vehicle_ar=None, dist_override=None, 
             buy_price = round_to_nearest(buy_price, 100)
             model_used = f"{model_used} + Port Transform"
         
-        # Apply margin after price determination
+        # Sell price: Recent port shipper median → fallback to Buy + Margin
         if buy_price:
             _, margin, _ = get_backhaul_probability(dest_ar)
-            sell_price = round_to_nearest(buy_price * (1 + margin), 50)
+            if len(port_rec_data) > 0 and 'total_shipper_price' in port_rec_data.columns and port_rec_data['total_shipper_price'].notna().any():
+                sell_price = round_to_nearest(port_rec_data['total_shipper_price'].median(), 50)
+            else:
+                sell_price = round_to_nearest(buy_price * (1 + margin), 50)
     
     return {
         'From': to_english_city(pickup_ar), 
@@ -3724,7 +3764,7 @@ with tab1:
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🛒 BUY PRICE", f"{result['Buy_Price']:,} SAR" if result['Buy_Price'] else "N/A")
-        c2.metric("💵 SELL PRICE", f"{result['Rec_Sell_Price']:,} SAR" if result.get('Rec_Sell_Price') else "N/A", help="Buy + Margin")
+        c2.metric("💵 SELL PRICE", f"{result['Rec_Sell_Price']:,} SAR" if result.get('Rec_Sell_Price') else "N/A", help="Recent shipper median or Buy + Margin")
         c3.metric("📊 Target Margin", result['Target_Margin'])
         c4.metric("📊 Confidence", f"{ {'High':'🟢','Medium':'🟡','Low':'🟠','Very Low':'🔴'}.get(result['Confidence'],'⚪') } {result['Confidence']}")
         
@@ -5470,11 +5510,22 @@ with tab4:
         st.markdown("---")
         
         # ============================================
-        # MASTER GRID GENERATOR
+        # MASTER GRID GENERATOR (3 Sheets)
         # ============================================
         st.markdown("### ⚡ Generate Master Grid")
-        st.warning("⚠️ This will generate pricing for ALL city combinations (~2,500+ routes). It may take a few minutes.")
+        st.warning("⚠️ This will generate pricing for ALL city combinations across 3 freight segments (~7,500+ routes total). It may take several minutes.")
         st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
+        
+        # Define the 3 freight segments and their sheet tab names
+        GRID_SEGMENTS = [
+            {'truck_type': 'Domestic',       'tab_name': 'Domestic'},
+            {'truck_type': 'Port Roundtrip',  'tab_name': 'Port Roundtrip'},
+            {'truck_type': 'Port Direct',     'tab_name': 'Port Direct'},
+        ]
+        
+        GRID_HEADERS = ['From', 'To', 'Freight_Segment', 'Distance', 'Distance_Source',
+                        'Buy_Price', 'Rec_Sell', 'Ref_Sell', 'Ref_Sell_Src', 
+                        'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
         
         batch_size = st.slider("Batch size", min_value=100, max_value=500, value=250, step=50, 
                                help="Number of routes to generate and upload at a time", key="admin_batch_size")
@@ -5488,7 +5539,7 @@ with tab4:
             if prog.get('error_message'):
                 st.error(f"❌ {prog['error_message']}")
             
-            st.warning(f"⚠️ Previous run incomplete: {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded.")
+            st.warning(f"⚠️ Previous run incomplete: Segment '{prog.get('current_segment', '?')}' — {prog['rows_written']:,}/{prog['total_routes']:,} routes uploaded.")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -5507,52 +5558,88 @@ with tab4:
         if start_fresh_clicked or resume_clicked:
             import time
             
-            wks = get_bulk_sheet()
-            if not wks:
-                st.error("❌ Google Cloud credentials not found or sheet access denied.")
+            # Build city combos once
+            combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
+            total_routes_per_segment = len(combos)
+            
+            # Determine starting point
+            if resume_clicked and has_incomplete:
+                prog = st.session_state.master_grid_progress
+                start_segment_idx = prog.get('segment_idx', 0)
+                start_index = prog.get('next_index', 0)
+                rows_written_segment = prog.get('rows_written', 0)
+                batch_num = prog.get('batch_num', 0)
+                all_results_by_segment = prog.get('all_results_by_segment', {})
+                segments_completed = prog.get('segments_completed', 0)
+                st.info(f"📊 Resuming segment '{GRID_SEGMENTS[start_segment_idx]['truck_type']}' from route {start_index:,}...")
             else:
-                combos = [(p, d) for p, d in itertools.product(all_canonicals, all_canonicals) if p != d]
-                total_routes = len(combos)
+                start_segment_idx = 0
+                start_index = 0
+                rows_written_segment = 0
+                batch_num = 0
+                all_results_by_segment = {}
+                segments_completed = 0
+            
+            overall_progress = st.progress(segments_completed / len(GRID_SEGMENTS))
+            overall_status = st.empty()
+            segment_progress = st.progress(0.0)
+            status_text = st.empty()
+            
+            grid_error = False
+            
+            for seg_idx in range(start_segment_idx, len(GRID_SEGMENTS)):
+                segment = GRID_SEGMENTS[seg_idx]
+                truck_type = segment['truck_type']
+                tab_name = segment['tab_name']
                 
-                ensure_sheet_rows(wks, total_routes + 10)
+                overall_status.markdown(f"📦 Segment **{seg_idx + 1}/{len(GRID_SEGMENTS)}**: **{truck_type}** → tab `{tab_name}`")
                 
-                if resume_clicked and has_incomplete:
-                    prog = st.session_state.master_grid_progress
-                    start_index = prog['next_index']
-                    rows_written = prog['rows_written']
-                    batch_num = prog['batch_num']
-                    all_results = prog.get('all_results', [])
-                    st.info(f"📊 Resuming from route {start_index:,} ({rows_written:,} already uploaded)...")
+                # Get/create sheet tab for this segment
+                wks = get_bulk_sheet_by_tab(tab_name)
+                if not wks:
+                    st.error(f"❌ Could not access sheet tab '{tab_name}'. Check Google Cloud credentials.")
+                    grid_error = True
+                    break
+                
+                ensure_sheet_rows(wks, total_routes_per_segment + 10)
+                
+                # If resuming into this segment, use saved state; otherwise start fresh
+                if seg_idx == start_segment_idx and resume_clicked and has_incomplete:
+                    s_start = start_index
+                    s_rows_written = rows_written_segment
+                    s_batch_num = batch_num
+                    s_results = all_results_by_segment.get(truck_type, [])
                 else:
+                    # Fresh segment — clear tab and write header
                     try:
                         wks.clear()
-                        headers = ['From', 'To', 'Distance', 'Buy_Price', 'Rec_Sell', 'Ref_Sell', 
-                                   'Ref_Sell_Src', 'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
-                        wks.update('A1', [headers])
+                        wks.update('A1', [GRID_HEADERS])
                     except Exception as e:
-                        st.error(f"❌ Failed to initialize sheet: {str(e)}")
-                        st.stop()
-                    
-                    start_index = 0
-                    rows_written = 0
-                    batch_num = 0
-                    all_results = []
-                    st.info(f"📊 Generating and uploading {total_routes:,} routes in batches of {batch_size}...")
+                        st.error(f"❌ Failed to initialize tab '{tab_name}': {str(e)}")
+                        grid_error = True
+                        break
+                    s_start = 0
+                    s_rows_written = 0
+                    s_batch_num = 0
+                    s_results = []
                 
-                progress_bar = st.progress(rows_written / total_routes if total_routes > 0 else 0)
-                status_text = st.empty()
+                segment_progress.progress(s_rows_written / total_routes_per_segment if total_routes_per_segment > 0 else 0)
                 
-                for i in range(start_index, total_routes, batch_size):
+                for i in range(s_start, total_routes_per_segment, batch_size):
                     batch_combos = combos[i:i + batch_size]
-                    batch_num += 1
+                    s_batch_num += 1
                     
-                    status_text.text(f"Batch {batch_num}: Generating {len(batch_combos)} routes...")
+                    status_text.text(f"[{truck_type}] Batch {s_batch_num}: Generating {len(batch_combos)} routes...")
                     batch_results = []
                     for p_ar, d_ar in batch_combos:
-                        batch_results.append(lookup_route_stats(p_ar, d_ar, DEFAULT_VEHICLE_AR, check_history=True))
+                        batch_results.append(lookup_route_stats(
+                            p_ar, d_ar, DEFAULT_VEHICLE_AR, 
+                            check_history=True, truck_type=truck_type
+                        ))
                     
-                    all_results.extend(batch_results)
+                    s_results.extend(batch_results)
                     
+                    # Flush pending errors/distances periodically
                     pending_errors = len(st.session_state.get('error_log_pending', []))
                     pending_distances = len(st.session_state.get('matched_distances_pending', []))
                     if pending_errors >= 500:
@@ -5560,41 +5647,59 @@ with tab4:
                     if pending_distances >= 100:
                         flush_matched_distances_to_sheet()
                     
-                    status_text.text(f"Batch {batch_num}: Writing {len(batch_results)} rows to sheet...")
+                    status_text.text(f"[{truck_type}] Batch {s_batch_num}: Writing {len(batch_results)} rows to '{tab_name}'...")
                     try:
-                        start_row = rows_written + 2
+                        start_row = s_rows_written + 2
                         batch_df = pd.DataFrame(batch_results)
-                        data_rows = batch_df.astype(str).values.tolist()
+                        # Ensure columns match headers (in order), fill missing with empty
+                        for col in GRID_HEADERS:
+                            if col not in batch_df.columns:
+                                batch_df[col] = ''
+                        data_rows = batch_df[GRID_HEADERS].astype(str).values.tolist()
                         wks.update(f'A{start_row}', data_rows)
-                        rows_written += len(batch_results)
+                        s_rows_written += len(batch_results)
                     except Exception as e:
+                        # Save progress for resume
+                        all_results_by_segment[truck_type] = s_results
                         st.session_state.master_grid_progress = {
                             'incomplete': True,
+                            'segment_idx': seg_idx,
+                            'current_segment': truck_type,
                             'next_index': i + batch_size,
-                            'rows_written': rows_written,
-                            'batch_num': batch_num,
-                            'total_routes': total_routes,
-                            'all_results': all_results,
-                            'error_message': f"Failed at batch {batch_num}: {str(e)}"
+                            'rows_written': s_rows_written,
+                            'batch_num': s_batch_num,
+                            'total_routes': total_routes_per_segment,
+                            'all_results_by_segment': all_results_by_segment,
+                            'segments_completed': segments_completed,
+                            'error_message': f"Failed at [{truck_type}] batch {s_batch_num}: {str(e)}"
                         }
                         flush_error_log_to_sheet(batch_size=500)
                         flush_matched_distances_to_sheet()
                         st.rerun()
                     
-                    progress_bar.progress(min(1.0, (i + len(batch_combos)) / total_routes))
-                    status_text.text(f"✓ Batch {batch_num} complete | {rows_written:,}/{total_routes:,} routes uploaded")
+                    segment_progress.progress(min(1.0, (i + len(batch_combos)) / total_routes_per_segment))
+                    status_text.text(f"[{truck_type}] ✓ Batch {s_batch_num} | {s_rows_written:,}/{total_routes_per_segment:,} routes")
                     
-                    if i + batch_size < total_routes:
+                    if i + batch_size < total_routes_per_segment:
                         time.sleep(0.3)
                 
+                # Segment complete — add timestamp
                 try:
-                    wks.update(f'A{rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+                    wks.update(f'A{s_rows_written + 2}', [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
                 except:
                     pass
                 
-                progress_bar.progress(1.0)
-                st.success(f"✅ Successfully uploaded {rows_written:,} routes in {batch_num} batches!")
+                all_results_by_segment[truck_type] = s_results
+                segments_completed += 1
+                overall_progress.progress(segments_completed / len(GRID_SEGMENTS))
+                st.success(f"✅ **{truck_type}**: {s_rows_written:,} routes → tab `{tab_name}`")
+            
+            if not grid_error:
+                # All segments done
+                segment_progress.empty()
                 status_text.empty()
+                overall_progress.progress(1.0)
+                overall_status.empty()
                 
                 if 'master_grid_progress' in st.session_state:
                     del st.session_state.master_grid_progress
@@ -5607,11 +5712,21 @@ with tab4:
                 if dist_count > 0:
                     st.caption(f"📏 Logged {dist_count} missing distances for Google Maps lookup")
                 
-                st.session_state.master_grid_df = pd.DataFrame(all_results)
+                # Combine all segments into one download DataFrame
+                all_dfs = []
+                for seg in GRID_SEGMENTS:
+                    seg_results = all_results_by_segment.get(seg['truck_type'], [])
+                    if seg_results:
+                        all_dfs.append(pd.DataFrame(seg_results))
+                if all_dfs:
+                    st.session_state.master_grid_df = pd.concat(all_dfs, ignore_index=True)
+                
+                total_uploaded = sum(len(v) for v in all_results_by_segment.values())
+                st.success(f"🎉 Master Grid complete! {total_uploaded:,} total routes across {len(GRID_SEGMENTS)} sheets.")
         
         if 'master_grid_df' in st.session_state:
             st.download_button(
-                "📥 Download Master Grid CSV", 
+                "📥 Download Master Grid CSV (All Segments)", 
                 st.session_state.master_grid_df.to_csv(index=False), 
                 "master_grid.csv", 
                 "text/csv",

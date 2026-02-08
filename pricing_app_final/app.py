@@ -5513,7 +5513,6 @@ with tab4:
         # MASTER GRID GENERATOR (3 Sheets)
         # ============================================
         st.markdown("### ⚡ Generate Master Grid")
-        st.warning("⚠️ This will generate pricing for ALL city combinations across 3 freight segments (~7,500+ routes total). It may take several minutes.")
         st.caption(f"Results will be uploaded to: {BULK_PRICING_SHEET_URL}")
         
         # Define the 3 freight segments and their sheet tab names
@@ -5526,6 +5525,23 @@ with tab4:
         GRID_HEADERS = ['From', 'To', 'Freight_Segment', 'Distance', 'Distance_Source',
                         'Buy_Price', 'Rec_Sell', 'Ref_Sell', 'Ref_Sell_Src', 
                         'Rental_Cost', 'Margin', 'Model', 'Confidence', 'Recent_N']
+        
+        # Segment selection
+        segment_options = ["All Segments"] + [s['truck_type'] for s in GRID_SEGMENTS]
+        selected_segment = st.selectbox(
+            "Select Segment",
+            options=segment_options,
+            key="admin_segment_select",
+            help="Choose a specific segment or generate all at once"
+        )
+        
+        # Filter segments based on selection
+        if selected_segment == "All Segments":
+            segments_to_run = GRID_SEGMENTS
+            st.warning(f"⚠️ This will generate pricing for ALL city combinations across {len(GRID_SEGMENTS)} freight segments (~7,500+ routes total). It may take several minutes.")
+        else:
+            segments_to_run = [s for s in GRID_SEGMENTS if s['truck_type'] == selected_segment]
+            st.info(f"📦 Will generate **{selected_segment}** segment only (~2,500 routes).")
         
         batch_size = st.slider("Batch size", min_value=100, max_value=500, value=250, step=50, 
                                help="Number of routes to generate and upload at a time", key="admin_batch_size")
@@ -5553,7 +5569,7 @@ with tab4:
         else:
             resume_clicked = False
         
-        start_fresh_clicked = st.button("🚀 Run & Upload Master Grid", key="admin_run") if not has_incomplete else False
+        start_fresh_clicked = st.button(f"🚀 Run & Upload {'Master Grid' if selected_segment == 'All Segments' else selected_segment}", key="admin_run") if not has_incomplete else False
         
         if start_fresh_clicked or resume_clicked:
             import time
@@ -5571,7 +5587,7 @@ with tab4:
                 batch_num = prog.get('batch_num', 0)
                 all_results_by_segment = prog.get('all_results_by_segment', {})
                 segments_completed = prog.get('segments_completed', 0)
-                st.info(f"📊 Resuming segment '{GRID_SEGMENTS[start_segment_idx]['truck_type']}' from route {start_index:,}...")
+                st.info(f"📊 Resuming segment '{segments_to_run[start_segment_idx]['truck_type']}' from route {start_index:,}...")
             else:
                 start_segment_idx = 0
                 start_index = 0
@@ -5580,19 +5596,19 @@ with tab4:
                 all_results_by_segment = {}
                 segments_completed = 0
             
-            overall_progress = st.progress(segments_completed / len(GRID_SEGMENTS))
+            overall_progress = st.progress(segments_completed / len(segments_to_run))
             overall_status = st.empty()
             segment_progress = st.progress(0.0)
             status_text = st.empty()
             
             grid_error = False
             
-            for seg_idx in range(start_segment_idx, len(GRID_SEGMENTS)):
-                segment = GRID_SEGMENTS[seg_idx]
+            for seg_idx in range(start_segment_idx, len(segments_to_run)):
+                segment = segments_to_run[seg_idx]
                 truck_type = segment['truck_type']
                 tab_name = segment['tab_name']
                 
-                overall_status.markdown(f"📦 Segment **{seg_idx + 1}/{len(GRID_SEGMENTS)}**: **{truck_type}** → tab `{tab_name}`")
+                overall_status.markdown(f"📦 Segment **{seg_idx + 1}/{len(segments_to_run)}**: **{truck_type}** → tab `{tab_name}`")
                 
                 # Get/create sheet tab for this segment
                 wks = get_bulk_sheet_by_tab(tab_name)
@@ -5691,7 +5707,7 @@ with tab4:
                 
                 all_results_by_segment[truck_type] = s_results
                 segments_completed += 1
-                overall_progress.progress(segments_completed / len(GRID_SEGMENTS))
+                overall_progress.progress(segments_completed / len(segments_to_run))
                 st.success(f"✅ **{truck_type}**: {s_rows_written:,} routes → tab `{tab_name}`")
             
             if not grid_error:
@@ -5714,7 +5730,7 @@ with tab4:
                 
                 # Combine all segments into one download DataFrame
                 all_dfs = []
-                for seg in GRID_SEGMENTS:
+                for seg in segments_to_run:
                     seg_results = all_results_by_segment.get(seg['truck_type'], [])
                     if seg_results:
                         all_dfs.append(pd.DataFrame(seg_results))
@@ -5722,7 +5738,7 @@ with tab4:
                     st.session_state.master_grid_df = pd.concat(all_dfs, ignore_index=True)
                 
                 total_uploaded = sum(len(v) for v in all_results_by_segment.values())
-                st.success(f"🎉 Master Grid complete! {total_uploaded:,} total routes across {len(GRID_SEGMENTS)} sheets.")
+                st.success(f"🎉 Master Grid complete! {total_uploaded:,} total routes across {len(segments_to_run)} sheets.")
         
         if 'master_grid_df' in st.session_state:
             st.download_button(

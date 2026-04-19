@@ -1,10 +1,10 @@
 {
-  "training_timestamp_utc": "2026-04-18T06:11:49.469009+00:00",
-  "domestic_records": 38898,
+  "training_timestamp_utc": "2026-04-19T06:27:22.587843+00:00",
+  "domestic_records": 38916,
   "domestic_lanes": 292,
-  "domestic_date_range": "2020-03-06 \u2192 2026-04-15",
-  "overall_mae": 0.1281,
-  "overall_r2": 0.7953,
+  "domestic_date_range": "2020-03-06 \u2192 2026-04-16",
+  "overall_mae": 0.1268,
+  "overall_r2": 0.7946,
   "port_records": 46063,
   "port_training_date": "2026-04-15"
 }
